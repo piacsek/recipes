@@ -651,6 +651,139 @@ test_rerun_after_the_merge_changes_nothing_twice() {
   assert_eq "$(mutating_calls)" ""
 }
 
+test_a_failed_repository_probe_creates_nothing() {
+  sandbox
+  probe_fails_on_a_fresh_run "repos/acme/acme-tool --jq .full_name"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out whether acme/acme-tool exists"
+  refute_exists "$PROJECT"
+  refute_exists "$HOME/.config/acme-tool-dev"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_repository_probe_on_a_rerun_changes_nothing() {
+  sandbox
+  probe_fails_on_a_rerun "repos/acme/acme-tool --jq .full_name"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out whether acme/acme-tool exists"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_main_probe_on_a_rerun_pushes_nothing() {
+  sandbox
+  probe_fails_on_a_rerun "branches/main"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out whether main is on acme/acme-tool"
+  refute_contains "$output" "==> push main"
+}
+
+test_a_failed_main_probe_in_an_https_clone_pushes_nothing() {
+  sandbox
+  flow >/dev/null
+  git -C "$PROJECT" remote set-url origin https://github.com/acme/acme-tool.git
+  : >"$FAKE_LOG"
+  set +e
+  output="$(FAKE_GH_FAIL="branches/main" flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  refute_contains "$output" "push main to acme/acme-tool"
+}
+
+test_a_rerun_in_an_https_clone_skips_the_push() {
+  sandbox
+  flow >/dev/null
+  git -C "$PROJECT" remote set-url origin https://github.com/acme/acme-tool.git
+  assert_contains "$(flow)" "==> push main: already done, skipped"
+}
+
+test_a_failed_branch_probe_clones_nothing() {
+  sandbox
+  set +e
+  FAKE_GH_FAIL="pr create" flow >/dev/null 2>&1
+  set -e
+  rm -rf "$PROJECT"
+  : >"$FAKE_LOG"
+  set +e
+  output="$(FAKE_GH_FAIL="branches/phase-0-foundations" flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out whether phase-0-foundations is on acme/acme-tool"
+  refute_exists "$PROJECT"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_scaffold_probe_on_a_rerun_changes_nothing() {
+  sandbox
+  probe_fails_on_a_rerun "contents/scripts/ship.sh"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out whether main holds scripts/ship.sh"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_pull_request_probe_on_a_rerun_changes_nothing() {
+  sandbox
+  probe_fails_on_a_rerun "pr list"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out which pull request phase-0-foundations has"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_settings_probe_on_a_rerun_changes_nothing() {
+  sandbox
+  probe_fails_on_a_rerun "allow_squash_merge"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out the repository settings"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_permissions_probe_on_a_rerun_changes_nothing() {
+  sandbox
+  probe_fails_on_a_rerun "permissions/workflow --jq"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out the Actions token permissions"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_ruleset_list_probe_on_a_rerun_creates_no_ruleset() {
+  sandbox
+  probe_fails_on_a_rerun "rulesets --jq"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out the rulesets of acme/acme-tool"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_ruleset_probe_after_the_merge_changes_nothing() {
+  sandbox
+  flow >/dev/null
+  merge_phase_0
+  : >"$FAKE_LOG"
+  set +e
+  output="$(FAKE_GH_FAIL="rulesets/777 --jq" flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out the required checks of the main ruleset"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_label_probe_on_a_rerun_creates_no_label() {
+  sandbox
+  probe_fails_on_a_rerun "label list"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out the labels of acme/acme-tool"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_secret_probe_prints_no_tap_token_steps() {
+  sandbox
+  probe_fails_on_a_rerun "secret list"
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out whether TAP_TOKEN is set"
+  refute_contains "$output" "pbpaste"
+}
+
 sandbox() {
   local tool real
   mkdir -p "$SCRATCH/bin" "$SCRATCH/shared" "$SCRATCH/projects" "$SCRATCH/remotes"
@@ -687,6 +820,22 @@ flow_asking() {
     TUI_REPO_DESCRIPTION="${TUI_REPO_DESCRIPTION:-Keeps the acme fleet in line}" \
     TUI_REPO_TAP=acme/homebrew-tap \
     "$TUI_REPO" acme-tool "$@"
+}
+
+probe_fails_on_a_fresh_run() {
+  set +e
+  output="$(FAKE_GH_FAIL="$1" flow 2>&1)"
+  status=$?
+  set -e
+}
+
+probe_fails_on_a_rerun() {
+  flow >/dev/null
+  : >"$FAKE_LOG"
+  set +e
+  output="$(FAKE_GH_FAIL="$1" flow 2>&1)"
+  status=$?
+  set -e
 }
 
 fail_then_rerun() {

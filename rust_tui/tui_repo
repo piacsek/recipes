@@ -221,6 +221,8 @@ dir="${PROJECTS_DIR:-$HOME/projects}/$name"
 branch=phase-0-foundations
 wt="$dir/.claude/worktrees/$branch"
 remote_url="git@github.com:$repo.git"
+work="$(mktemp -d "${TMPDIR:-/tmp}/tui_repo.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
 link="$HOME/.config/$name-dev/denylist"
 title="Set up $name with its checks, guidelines and automatic releases"
 record_title="Record the phase 0 pull request in the metrics"
@@ -231,17 +233,25 @@ wanted_labels="adversarial-review-finding|ededed|
 development-cycle-improvement|0E8A16|Makes iterating on this project faster or more reliable
 Type: Maintenance|BFD4F2|Upkeep with no new feature: tooling, refactors, internal quality"
 
+origin=""
+
 origin_of() {
-  git -C "$1" config --get remote.origin.url 2>/dev/null || true
+  local status=0
+  origin="$(git -C "$1" config --get remote.origin.url)" || status=$?
+  case "$status" in
+    0) ;;
+    1) origin="" ;;
+    *) die "could not find out the origin of $1" ;;
+  esac
 }
 
 is_clone() {
-  local top url
+  local top
   top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
   [ -n "$top" ] || return 1
   [ "$(cd "$top" && pwd -P)" = "$(cd "$dir" && pwd -P)" ] || return 1
-  url="$(origin_of "$dir")"
-  case "$url" in
+  origin_of "$dir"
+  case "$origin" in
     "git@github.com:$repo.git" | "https://github.com/$repo" | "https://github.com/$repo.git") return 0 ;;
   esac
   return 1
@@ -265,6 +275,9 @@ known_scaffold=""
 known_branch=""
 known_main=""
 known_ruleset=""
+probe_out=""
+missing=""
+missing_label_lines=""
 
 forget() {
   known_repo=""
@@ -275,36 +288,50 @@ forget() {
   known_ruleset=""
 }
 
+lookup() {
+  local what="$1"
+  shift
+  if probe_out="$("$@" 2>"$work/probe.err")"; then return 0; fi
+  if grep -q '(HTTP 404)' "$work/probe.err"; then return 1; fi
+  die "could not find out $what: $(tr '\n' ' ' <"$work/probe.err")"
+}
+
+query() {
+  lookup "$@" || die "could not find out $1: not found"
+}
+
 repo_exists() {
   if [ -z "$known_repo" ]; then
-    if gh api "repos/$repo" --silent >/dev/null 2>&1; then known_repo=yes; else known_repo=no; fi
+    if lookup "whether $repo exists" gh api "repos/$repo" --jq .full_name; then known_repo=yes; else known_repo=no; fi
   fi
   [ "$known_repo" = yes ]
 }
 
-pr_json() {
-  if [ -z "$known_pr" ]; then
-    known_pr=none
-    if repo_exists; then
-      known_pr="$(gh pr list --repo "$repo" --head "$branch" --state all --json number,state,url,body,createdAt --jq '.[0] // empty')"
-      [ -n "$known_pr" ] || known_pr=none
-    fi
-  fi
-  [ "$known_pr" = none ] || printf '%s\n' "$known_pr"
+load_pr() {
+  [ -z "$known_pr" ] || return 0
+  known_pr=none
+  repo_exists || return 0
+  query "which pull request $branch has" gh pr list --repo "$repo" --head "$branch" --state all --json number,state,url,body,createdAt --jq '.[0] // empty'
+  [ -z "$probe_out" ] || known_pr="$probe_out"
+}
+
+has_pr() {
+  load_pr
+  [ "$known_pr" != none ]
 }
 
 pr_field() {
-  pr_json | jq -r ".$1"
+  [ "$known_pr" = none ] || printf '%s\n' "$known_pr" | jq -r ".$1"
 }
 
 pr_open() {
-  [ "$(pr_field state 2>/dev/null)" = OPEN ]
+  has_pr && [ "$(pr_field state)" = OPEN ]
 }
 
 scaffold_on_main() {
   if [ -z "$known_scaffold" ]; then
     known_scaffold=no
-    if repo_exists && gh api "repos/$repo/contents/scripts/ship.sh?ref=main" --silent >/dev/null 2>&1; then
+    if repo_exists && lookup "whether main holds scripts/ship.sh" gh api "repos/$repo/contents/scripts/ship.sh?ref=main" --jq .path; then
       known_scaffold=yes
     fi
   fi
@@ -312,7 +339,7 @@ scaffold_on_main() {
 }
 
 remote_has() {
-  git ls-remote --heads "$remote_url" "refs/heads/$1" 2>/dev/null | grep -q .
+  lookup "whether $1 is on $repo" gh api "repos/$repo/branches/$1" --jq .name
 }
 
 remote_branch() {
@@ -331,22 +358,20 @@ remote_main() {
   [ "$known_main" = yes ]
 }
 
-ruleset_id() {
-  if [ -z "$known_ruleset" ]; then
-    known_ruleset=none
-    if repo_exists; then
-      known_ruleset="$(gh api "repos/$repo/rulesets" --jq '[.[] | select(.name == "main") | .id][0] // empty')"
-      [ -n "$known_ruleset" ] || known_ruleset=none
-    fi
-  fi
-  [ "$known_ruleset" = none ] || printf '%s\n' "$known_ruleset"
+load_ruleset() {
+  [ -z "$known_ruleset" ] || return 0
+  known_ruleset=none
+  repo_exists || return 0
+  query "the rulesets of $repo" gh api "repos/$repo/rulesets" --jq '[.[] | select(.name == "main") | .id][0] // empty'
+  [ -z "$probe_out" ] || known_ruleset="$probe_out"
 }
 
-missing_checks() {
-  local id
-  id="$(ruleset_id)"
-  [ -n "$id" ] || return 0
-  gh api "repos/$repo/rulesets/$id" --jq "([\"${required// /\",\"}\"] - [.rules[] | select(.type == \"required_status_checks\") | .parameters.required_status_checks[].context]) | join(\", \")"
+load_missing_checks() {
+  missing=""
+  load_ruleset
+  [ "$known_ruleset" != none ] || return 0
+  query "the required checks of the main ruleset" gh api "repos/$repo/rulesets/$known_ruleset" --jq "([\"${required// /\",\"}\"] - [.rules[] | select(.type == \"required_status_checks\") | .parameters.required_status_checks[].context]) | join(\", \")"
+  missing="$probe_out"
 }
 
 local_branch() {
@@ -371,7 +396,7 @@ ours() {
 
 phase0_active() {
   repo_exists || return 0
-  [ -z "$(pr_json)" ] || return 1
+  ! has_pr || return 1
   if scaffold_on_main; then return 1; fi
   if local_branch; then
     ours
@@ -381,14 +406,16 @@ phase0_active() {
   return 0
 }
 
-missing_labels() {
+load_missing_labels() {
   local have="" line label
+  missing_label_lines=""
   if repo_exists; then
-    have="$(gh label list --repo "$repo" --json name --limit 500 --jq '.[].name')"
+    query "the labels of $repo" gh label list --repo "$repo" --json name --limit 500 --jq '.[].name'
+    have="$probe_out"
   fi
   while IFS= read -r line; do
     label="${line%%|*}"
-    printf '%s\n' "$have" | grep -qxF -- "$label" || printf '%s\n' "$line"
+    printf '%s\n' "$have" | grep -qxF -- "$label" || missing_label_lines="$missing_label_lines$line"$'\n'
   done <<EOF
 $wanted_labels
 EOF
@@ -421,7 +448,8 @@ do_local() {
   fi
   mkdir -p "$dir/.github/workflows"
   [ -d "$dir/.git" ] || git -C "$dir" init -q --initial-branch main
-  [ -n "$(origin_of "$dir")" ] || git -C "$dir" remote add origin "$remote_url"
+  origin_of "$dir"
+  [ -n "$origin" ] || git -C "$dir" remote add origin "$remote_url"
   printf '# %s\n' "$name" >"$dir/README.md"
   render "$dir" LICENSE
   render "$dir" CHANGELOG.md
@@ -467,7 +495,7 @@ do_push() {
 
 plan_settings() {
   plan=""
-  if repo_exists && [ "$(gh api "repos/$repo" --jq '[.allow_squash_merge, .allow_merge_commit, .allow_rebase_merge, .allow_auto_merge, .allow_update_branch, .delete_branch_on_merge, .squash_merge_commit_title, .squash_merge_commit_message, .has_discussions, .security_and_analysis.secret_scanning.status, .security_and_analysis.secret_scanning_push_protection.status] | map(tostring) | join(",")')" = "$wanted_settings" ]; then
+  if repo_exists && query "the repository settings" gh api "repos/$repo" --jq '[.allow_squash_merge, .allow_merge_commit, .allow_rebase_merge, .allow_auto_merge, .allow_update_branch, .delete_branch_on_merge, .squash_merge_commit_title, .squash_merge_commit_message, .has_discussions, .security_and_analysis.secret_scanning.status, .security_and_analysis.secret_scanning_push_protection.status] | map(tostring) | join(",")' && [ "$probe_out" = "$wanted_settings" ]; then
     return 0
   fi
   plan="squash merges only, delete merged branches, discussions on, secret scanning and push protection on"
@@ -495,7 +523,7 @@ EOF
 
 plan_permissions() {
   plan=""
-  if repo_exists && [ "$(gh api "repos/$repo/actions/permissions/workflow" --jq '"\(.default_workflow_permissions),\(.can_approve_pull_request_reviews)"')" = "read,false" ]; then
+  if repo_exists && query "the Actions token permissions" gh api "repos/$repo/actions/permissions/workflow" --jq '"\(.default_workflow_permissions),\(.can_approve_pull_request_reviews)"' && [ "$probe_out" = "read,false" ]; then
     return 0
   fi
   plan="the Actions token reads only and approves no pull request"
@@ -508,20 +536,21 @@ do_permissions() {
 }
 
 plan_ruleset() {
-  local missing
   plan=""
-  if [ -z "$(ruleset_id)" ]; then
+  load_ruleset
+  if [ "$known_ruleset" = none ]; then
     plan="create the main ruleset, requiring check and audit"
     return 0
   fi
   scaffold_on_main || return 0
-  missing="$(missing_checks)"
+  load_missing_checks
   [ -z "$missing" ] || plan="add $missing to the required checks"
 }
 
 do_ruleset() {
-  local id missing
-  if [ -z "$(ruleset_id)" ]; then
+  local id
+  load_ruleset
+  if [ "$known_ruleset" = none ]; then
     gh api --silent -X POST "repos/$repo/rulesets" --input - <<'EOF'
 {
   "name": "main",
@@ -561,8 +590,8 @@ EOF
     known_ruleset=""
   fi
   scaffold_on_main || return 0
-  id="$(ruleset_id)"
-  missing="$(missing_checks)"
+  load_missing_checks
+  id="$known_ruleset"
   [ -n "$missing" ] || return 0
   gh api "repos/$repo/rulesets/$id" | jq --arg add "$missing" '
     ($add | split(", ") | map({context: ., integration_id: 15368})) as $new
@@ -577,17 +606,19 @@ EOF
 plan_labels() {
   local names
   plan=""
-  names="$(missing_labels | cut -d'|' -f1 | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
+  load_missing_labels
+  names="$(printf '%s' "$missing_label_lines" | cut -d'|' -f1 | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
   [ -z "$names" ] || plan="create $names"
 }
 
 do_labels() {
   local label color text
+  load_missing_labels
   while IFS='|' read -r label color text; do
     [ -n "$label" ] || continue
     gh label create "$label" --repo "$repo" --color "$color" --description "$text" >/dev/null
   done <<EOF
-$(missing_labels)
+$missing_label_lines
 EOF
 }
 
@@ -614,7 +645,8 @@ do_render() {
   files="$(git -C "$wt" ls-tree -r --name-only origin/main | LC_ALL=C sort | tr '\n' ' ')"
   [ "$files" = ".github/workflows/ci.yml CHANGELOG.md LICENSE README.md " ] ||
     die "main holds more than the bootstrap commit ($files), so the phase 0 plan's facts would be false"
-  ruleset_id="$(ruleset_id)"
+  load_ruleset
+  ruleset_id="$known_ruleset"
   main_sha="$(git -C "$wt" rev-parse --short origin/main)"
   start="$(perl -MPOSIX -e 'print strftime("%Y-%m-%d %H:%M:%SZ", gmtime($ARGV[0]))' "$(git -C "$dir" reflog show --format=%ct "refs/heads/$branch" | tail -n 1)")"
   render "$wt"
@@ -693,6 +725,7 @@ EOF
 
 do_body() {
   local sha
+  load_pr
   git -C "$dir" fetch -q origin
   sha="$(git -C "$dir" log -1 --format=%H "origin/$branch" -- docs/help.png)"
   [ -n "$sha" ] || die "origin/$branch has no docs/help.png"
@@ -708,6 +741,7 @@ plan_record() {
 
 do_record() {
   local at cell metrics_start
+  load_pr
   at="$(pr_field createdAt)"
   cd "$wt"
   metrics_start="$(sed -n 's/^| 0 |  | \([^|]*\) |  | .*/\1/p' plans/metrics.md)"
@@ -741,7 +775,7 @@ missing_tools() {
   for tool in gh git jq perl; do
     command -v "$tool" >/dev/null || echo "$tool is missing: brew install $tool"
   done
-  phase0_active || return 0
+  [ -n "$active" ] || return 0
   command -v tmux >/dev/null || echo "tmux is missing: brew install tmux"
   command -v freeze >/dev/null || echo "freeze is missing: brew install charmbracelet/tap/freeze"
   [ -n "$(find_chrome)" ] || echo "Google Chrome or chromium is missing: install Google Chrome, or set CHROME to a Chrome or chromium binary"
@@ -756,6 +790,8 @@ if [ ! -e "$link" ] && [ ! -L "$link" ] && [ ! -f "$shared_denylist" ]; then
   die "the shared denylist $shared_denylist is missing, so $link cannot link to it; create it or set TUI_REPO_SHARED_DENYLIST"
 fi
 command -v gh >/dev/null || die "gh is missing: brew install gh"
+active=""
+if phase0_active; then active=1; fi
 tools="$(missing_tools)"
 [ -z "$tools" ] || { printf '%s\n' "$tools" | sed 's/^/tui_repo: /' >&2; exit 1; }
 
@@ -796,7 +832,8 @@ trap - ERR
 set +E
 cd "$dir"
 
-url="$(pr_field url 2>/dev/null || true)"
+load_pr
+url="$(pr_field url)"
 [ -z "$url" ] || echo "$url"
 if [ -z "$url" ] && local_branch && ! ours; then
   echo "tui_repo: $branch exists locally with other work and no pull request, so phase 0 was left alone"
@@ -804,7 +841,8 @@ fi
 if ! scaffold_on_main; then
   echo "After merging the pull request, rerun tui_repo $name to require the version check on main."
 fi
-if gh secret list --repo "$repo" --json name --jq '.[].name' | grep -qx TAP_TOKEN; then
+query "whether TAP_TOKEN is set" gh secret list --repo "$repo" --json name --jq '.[].name'
+if printf '%s\n' "$probe_out" | grep -qx TAP_TOKEN; then
   echo "TAP_TOKEN: already set"
 else
   cat <<EOF

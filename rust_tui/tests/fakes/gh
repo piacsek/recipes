@@ -163,6 +163,12 @@ api() {
       body="$(request_body)"
       json_or rulesets.json '[]' | jq --argjson id "${route#/rulesets/}" --argjson body "$body" 'map(if .id == $id then $body + {id: $id} else . end)' | save rulesets.json
       ;;
+    "GET /branches/"*)
+      require_repo
+      local name="${route#/branches/}"
+      git --git-dir "$(remote "$repo")" rev-parse -q --verify "refs/heads/$name" >/dev/null || not_found
+      jq -n --arg name "$name" '{name: $name}' | emit
+      ;;
     "GET /contents/"*)
       require_repo
       local file="${route#/contents/}" ref=main
