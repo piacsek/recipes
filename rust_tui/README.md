@@ -33,13 +33,13 @@ GitHub or `~/.config`.
 The name gives three variants: `acme_tool` (Rust identifiers), `ACME_TOOL` (the denylist variable)
 and `AcmeTool` (the Homebrew formula class). It must start with a lowercase letter, hold only
 lowercase letters, digits and single hyphens, stay within 64 characters and not be a Rust keyword, a
-name cargo or Windows refuses, or `tempfile` or `toml` (the project's dev-dependencies, which a
-package of the same name could not depend on). Test helpers and constants have fixed names
+name cargo or Windows refuses, or the name of any package in the template's `Cargo.lock` (read at
+run time; two packages of one name break the release scripts). Test helpers and constants have fixed names
 (`launch`, `PACKAGE_ENTRY`, `link_dev_binary`), so a name such as `stdout`, `stderr` or
 `version-line` is accepted.
 
 Every input is checked before anything is created. Before the first side effect it also checks that
-the shared denylist exists (when the project's link is missing) and, while phase 0 is still to do,
+the shared denylist is a readable, non-empty file (when the project's link is missing) and, while phase 0 is still to do,
 that `tmux`, `freeze`, Chrome or chromium, `python3` and `cargo` are installed, one line per missing
 tool with how to install it.
 
@@ -63,7 +63,7 @@ anything changes.
 | push main | `main` is on GitHub |
 | repository settings | squash only, delete merged branches, discussions, secret scanning and push protection are already set |
 | Actions token permissions | read only, no pull request approval |
-| main ruleset | a ruleset named `main` exists and, once the scaffold is on `main`, requires `check`, `audit` and `version` |
+| main ruleset | a branch ruleset of this repository targets `main` and, once the scaffold is on `main`, requires `check`, `audit` and `version` |
 | labels | `adversarial-review-finding`, `development-cycle-improvement` and `Type: Maintenance` exist |
 | phase 0 worktree | `.claude/worktrees/phase-0-foundations` exists |
 | phase 0 render | the branch has its commit, or the worktree holds the render |
@@ -92,7 +92,10 @@ nothing and exits 0.
   bootstrap writes (its directories, files byte-identical to the bootstrap's, and a `.git` with no
   commit whose origin is unset or `<owner>/<name>`) is completed. A changed or extra file, another
   origin or a commit stops the run.
-- The ruleset is found by name and created only when missing. It is never replaced or duplicated.
+- The ruleset is found by what it protects: a ruleset whose source is this repository, whose target
+  is `branch` and whose conditions include `~DEFAULT_BRANCH` or `refs/heads/main`, whatever its
+  name. It is created only when none matches and never replaced; when more than one matches, the
+  run names them and stops before any change.
   A rerun adds whichever of `check` and `audit` is missing, and, once `main` holds
   `scripts/ship.sh`, `version`, after the checks already there, and says what it added. It never
   removes or reorders a check.
@@ -106,7 +109,12 @@ nothing and exits 0.
 - The render goes to a fresh temporary directory first and is compared with the worktree. Files
   that already match are kept, missing or partial ones are copied in, and the render step counts as
   done only when every rendered file matches. A worktree change the render would not write (an
-  untracked file, an edit to a tracked or rendered file) stops the run and names its paths.
+  untracked file, an edit to a tracked or rendered file) stops the run and names its paths. The
+  fresh render is formatted with `cargo fmt` first, so it equals what `scripts/ship.sh` formats.
+- `tests/flow_test.sh` fails every side-effecting step once and, separately, kills the script right
+  after it, then checks that a rerun ends in the same state as an uninterrupted run.
+- A branch on GitHub with no pull request and no local branch is left alone, and the closing lines
+  print the commands that open its pull request.
 
 ## Owner steps
 
@@ -114,9 +122,10 @@ nothing and exits 0.
 2. Before merging, set `TAP_TOKEN`: the release needs it to write the Homebrew formula. The script
    prints these steps last until the secret exists, then prints `TAP_TOKEN: already set`.
    1. Create a fine-grained token at
-      `https://github.com/settings/personal-access-tokens/new?name=<name>-tap&contents=write`,
-      with access to the tap repository only and Contents set to Read and write.
-   2. Copy it, then run:
+      `https://github.com/settings/personal-access-tokens/new?name=<name>-tap&contents=write`
+      (plus `&target_name=<tap owner>` when the tap belongs to another account), with access to the
+      tap repository only and Contents set to Read and write.
+   2. Copy it, then run (`pbpaste` because the recipe targets the owner's Mac):
 
       ```bash
       pbpaste | gh secret set TAP_TOKEN --repo <owner>/<name>
@@ -132,7 +141,8 @@ the Homebrew formula. Characters that would change meaning in one of them are re
 
 | Characters | Rule |
 | --- | --- |
-| letters, digits, space, `& / \| , ( ) ! % ? ' # { } + - _ : ; < > = @ [ ] ^ ~ * .` | copied as they are |
+| letters, digits, space, `& / \| , ( ) ! % ? ' # { } + - _ : ; = @ [ ] ^ ~ * .` | copied as they are |
+| `<`, `>` | refused: Markdown in the README and the pull request body reads them as an HTML tag |
 | `"` | refused: ends the string in TOML, Nix, Ruby and Rust |
 | `\` | refused: starts an escape in TOML, Nix, Ruby, Rust and the formula's heredoc |
 | `` ` `` | refused: runs a command in the formula's heredoc |
@@ -166,6 +176,15 @@ The fakes stand in for these; no test has run them against github.com:
 - The ruleset `PUT` as sent, when a rerun adds a required check.
 - The rerun after the phase 0 merge, which adds `version`.
 - The interactive flow on a terminal: the questions and the `Go ahead? [y/N]` prompt.
+
+## Known decisions
+
+- The `/pr-review` link in the rendered guidelines is fixed to piacsek's dotfiles.
+- An existing regular file at `~/.config/<name>-dev/denylist` is kept as that project's own list.
+- The slow gates test uses the real Cargo and rustup caches and may fetch from crates.io; it never
+  reaches GitHub or the real `~/.config`.
+- A blank line in a denylist makes the rendered scrub check refuse every ship, which fails safe.
+- The closing `TAP_TOKEN` instructions use `pbpaste`: the recipe targets the owner's Mac.
 
 ## Bash
 
