@@ -16,7 +16,7 @@ Checked by `tui_repo` before it rendered this branch:
 
 - `main` holds only the bootstrap commit: `README.md`, `LICENSE` (MIT), a `CHANGELOG.md` of its
   `# Changelog` heading alone and a `ci.yml` whose `check` job only echoes.
-- The `main` ruleset (id {{ruleset_id}}) exists and requires `check` and `audit`.
+- {{ruleset_fact}}
 - `~/.config/{{name}}-dev/denylist` exists on the machine that ran `tui_repo`, so the scrub check
   ran from the first ship of this branch.
 

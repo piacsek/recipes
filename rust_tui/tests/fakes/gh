@@ -2,6 +2,7 @@
 set -euo pipefail
 printf 'gh %s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
 state="${FAKE_STATE:?FAKE_STATE is not set}"
+all_args="$*"
 mkdir -p "$state"
 
 if [ -n "${FAKE_GH_FAIL:-}" ]; then
@@ -305,3 +306,12 @@ case "${positional[0]:-}" in
   secret) secrets ;;
   *) unknown ;;
 esac
+
+if [ -n "${FAKE_GH_ONCE_AFTER:-}" ] && [ ! -e "$FAKE_STATE/once-fired" ]; then
+  case "$all_args" in
+    *"$FAKE_GH_ONCE_AFTER"*)
+      : >"$FAKE_STATE/once-fired"
+      "$FAKE_GH_ONCE_RUN"
+      ;;
+  esac
+fi

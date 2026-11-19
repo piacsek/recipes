@@ -113,13 +113,13 @@ flow() {
 
 flow_asking() {
   PATH="$SCRATCH/bin" \
-    PROJECTS_DIR="$SCRATCH/projects" \
+    PROJECTS_DIR="${PROJECTS:-$SCRATCH/projects}" \
     FAKE_REMOTES="$SCRATCH/remotes" \
     CHROME="${CHROME:-$SCRATCH/bin/chrome}" \
     TUI_REPO_SHARED_DENYLIST="${SHARED_DENYLIST:-$SCRATCH/shared/denylist}" \
     TUI_REPO_DESCRIPTION="${TUI_REPO_DESCRIPTION:-Keeps the acme fleet in line}" \
     TUI_REPO_TAP="${TAP:-acme/homebrew-tap}" \
-    TMPDIR="$SCRATCH/tmp" \
+    TMPDIR="${TMP_DIR:-$SCRATCH/tmp}" \
     "$TUI_REPO" acme-tool "$@"
 }
 

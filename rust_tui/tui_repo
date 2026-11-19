@@ -7,10 +7,8 @@ if [ "${BASH_VERSINFO[0]}" -lt 3 ] || { [ "${BASH_VERSINFO[0]}" -eq 3 ] && [ "${
 fi
 
 recipe="$(cd "$(dirname "$0")" && pwd)"
-shared_denylist="${TUI_REPO_SHARED_DENYLIST:-$HOME/.config/conveyor-dev/denylist}"
-case "$shared_denylist" in /*) ;; *) shared_denylist="$PWD/$shared_denylist" ;; esac
 templates="$recipe/templates"
-keys="name snake upper class owner tap_repo tap description author year ruleset_id date main_sha start pr_ref draft_pr"
+keys="name snake upper class owner tap_repo tap description author year ruleset_id ruleset_fact date main_sha start pr_ref draft_pr"
 
 usage() {
   cat <<'EOF'
@@ -54,6 +52,20 @@ while [ $# -gt 0 ]; do
     *) name="$1"; shift ;;
   esac
 done
+
+absolute() {
+  case "$1" in
+    "" | /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$PWD" "$1" ;;
+  esac
+}
+
+HOME="$(absolute "$HOME")"
+shared_denylist="$(absolute "${TUI_REPO_SHARED_DENYLIST:-$HOME/.config/conveyor-dev/denylist}")"
+projects_dir="$(absolute "${PROJECTS_DIR:-$HOME/projects}")"
+render_only="$(absolute "$render_only")"
+tmp_root="$(absolute "${TMPDIR:-/tmp}")"
+[ -z "${CHROME:-}" ] || CHROME="$(absolute "$CHROME")"
 
 ask() {
   local answer=""
@@ -161,6 +173,7 @@ tap="${tap_repo%%/*}/${tap_repo#*/homebrew-}"
 year="$(date -u +%Y)"
 date="$(date -u +%Y-%m-%d)"
 ruleset_id="${TUI_REPO_RULESET_ID:-unknown}"
+ruleset_fact="The \`main\` ruleset (id $ruleset_id) exists and requires \`check\` and \`audit\`."
 main_sha="${TUI_REPO_MAIN_SHA:-unknown}"
 start="${TUI_REPO_START:-unknown}"
 pr_ref=""
@@ -170,7 +183,7 @@ render() {
   local out="$1" only="${2:-}"
   export RT_name="$name" RT_snake="$snake" RT_upper="$upper" RT_class="$class" RT_owner="$owner" \
     RT_tap_repo="$tap_repo" RT_tap="$tap" RT_description="$description" RT_author="$author" \
-    RT_year="$year" RT_ruleset_id="$ruleset_id" RT_date="$date" RT_main_sha="$main_sha" \
+    RT_year="$year" RT_ruleset_id="$ruleset_id" RT_ruleset_fact="$ruleset_fact" RT_date="$date" RT_main_sha="$main_sha" \
     RT_start="$start" RT_pr_ref="$pr_ref" RT_draft_pr="$draft_pr"
   RT_KEYS="$keys" RT_ONLY="$only" perl -e '
     use strict;
@@ -227,11 +240,11 @@ if [ -n "$render_only" ]; then
 fi
 
 repo="$owner/$name"
-dir="${PROJECTS_DIR:-$HOME/projects}/$name"
+dir="$projects_dir/$name"
 branch=phase-0-foundations
 wt="$dir/.claude/worktrees/$branch"
 remote_url="git@github.com:$repo.git"
-work="$(mktemp -d "${TMPDIR:-/tmp}/tui_repo.XXXXXX")"
+work="$(mktemp -d "$tmp_root/tui_repo.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 link="$HOME/.config/$name-dev/denylist"
 title="Set up $name with its checks, guidelines and automatic releases"
@@ -346,6 +359,7 @@ known_branch=""
 known_main=""
 known_ruleset=""
 known_enforcement=""
+known_scope=""
 known_ruleset_label=""
 plan_note=""
 known_empty=""
@@ -499,16 +513,18 @@ check_ownership() {
 }
 
 load_ruleset() {
-  local id found="" enforcement=""
+  local id found="" enforcement="" scope="" rest
   [ -z "$known_ruleset" ] || return 0
   known_ruleset=none
   repo_exists || return 0
   query "the rulesets of $repo" gh api --paginate "repos/$repo/rulesets" --jq ".[] | select(.source_type == \"Repository\" and (.source | ascii_downcase) == \"$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')\" and .target == \"branch\") | .id"
   for id in $probe_out; do
-    query "ruleset $id of $repo" gh api "repos/$repo/rulesets/$id" --jq 'select(any(.conditions.ref_name.include[]?; IN("~DEFAULT_BRANCH", "~ALL", "refs/heads/main", "refs/heads/*", "refs/heads/**"))) | "\(.enforcement) \(.id) \"\(.name)\""'
+    query "ruleset $id of $repo" gh api "repos/$repo/rulesets/$id" --jq 'select(any(.conditions.ref_name.include[]?; IN("~DEFAULT_BRANCH", "~ALL", "refs/heads/main", "refs/heads/*", "refs/heads/**"))) | "\(.enforcement) \(if any(.conditions.ref_name.include[]?; IN("~ALL", "refs/heads/*", "refs/heads/**")) then "all" else "main" end) \(.id) \"\(.name)\""'
     [ -n "$probe_out" ] || continue
     enforcement="${probe_out%% *}"
-    found="$found${probe_out#* }"$'\n'
+    rest="${probe_out#* }"
+    scope="${rest%% *}"
+    found="$found${rest#* }"$'\n'
   done
   found="$(printf '%s' "$found" | sed '/^$/d')"
   [ -n "$found" ] || return 0
@@ -517,6 +533,12 @@ load_ruleset() {
   known_ruleset="${found%% *}"
   known_ruleset_label="$found"
   known_enforcement="$enforcement"
+  known_scope="$scope"
+}
+
+ruleset_all() {
+  load_ruleset
+  [ "$known_ruleset" != none ] && [ "$known_scope" = all ]
 }
 
 ruleset_inactive() {
@@ -683,6 +705,10 @@ plan_ruleset() {
     plan="create the main ruleset, requiring check and audit"
     return 0
   fi
+  if ruleset_all; then
+    plan_note="ruleset $known_ruleset_label covers every branch, so requiring checks would refuse the first push of $branch; left as is"
+    return 0
+  fi
   load_missing_checks
   [ -z "$missing" ] || plan="add $missing to the required checks"
   if ruleset_inactive; then
@@ -787,6 +813,13 @@ fresh_render() {
   esac
   load_ruleset
   ruleset_id="$known_ruleset"
+  if [ "$known_scope" = all ]; then
+    ruleset_fact="The ruleset that protects \`main\` (id $ruleset_id) covers every branch, so \`tui_repo\` left it as it is and added no required checks."
+  elif [ "$known_enforcement" != active ]; then
+    ruleset_fact="The \`main\` ruleset (id $ruleset_id) lists \`check\` and \`audit\` as required, but its enforcement is \`$known_enforcement\`, so it enforces nothing yet."
+  else
+    ruleset_fact="The \`main\` ruleset (id $ruleset_id) exists and requires \`check\` and \`audit\`."
+  fi
   main_sha="$(git -C "$wt" rev-parse --short origin/main)"
   git -C "$dir" reflog show --format=%ct "refs/heads/$branch" >"$work/reflog"
   start="$(tail -n 1 "$work/reflog")"
@@ -817,7 +850,11 @@ compare_render() {
     render_foreign="$render_foreign $rel"
   done <"$work/status"
   while IFS= read -r rel; do
-    cmp -s "$work/render/$rel" "$wt/$rel" 2>/dev/null || render_missing="$render_missing$rel"$'\n'
+    if cmp -s "$work/render/$rel" "$wt/$rel" 2>/dev/null; then continue; fi
+    render_missing="$render_missing$rel"$'\n'
+    { [ -e "$wt/$rel" ] || [ -L "$wt/$rel" ]; } || continue
+    git -C "$wt" cat-file -e "HEAD:$rel" 2>/dev/null && continue
+    case "$render_foreign " in *" $rel "*) ;; *) render_foreign="$render_foreign $rel" ;; esac
   done <"$work/rendered"
 }
 
@@ -1068,13 +1105,16 @@ tools="$(missing_tools)"
 [ -z "$tools" ] || { printf '%s\n' "$tools" | sed 's/^/tui_repo: /' >&2; exit 1; }
 
 echo "tui_repo: $repo in $dir"
+printf '  name: %s\n  description: %s\n  owner: %s\n  tap: %s\n  author: %s\n' "$name" "$description" "$owner" "$tap_repo" "$author"
 pending=""
+planned=" "
 for s in $steps; do
   plan_note=""
   "plan_$s"
   if [ -n "$plan" ]; then
     printf '  %s: %s%s\n' "$(label_of "$s")" "$plan" "${plan_note:+ ($plan_note)}"
     pending=1
+    planned="$planned$s "
   else
     printf '  %s: already done%s\n' "$(label_of "$s")" "${plan_note:+ ($plan_note)}"
   fi
@@ -1094,6 +1134,7 @@ for s in $steps; do
   current="$(label_of "$s")"
   "plan_$s"
   if [ -z "$plan" ]; then
+    case "$planned" in *" $s "*) die "the plan said $current would run, but it was already done when its turn came; something changed it meanwhile, so read the state and rerun tui_repo $name" ;; esac
     echo "==> $current: already done, skipped"
     continue
   fi
@@ -1109,7 +1150,11 @@ load_pr
 url="$(pr_field url)"
 [ -z "$url" ] || echo "$url"
 if [ -z "$url" ] && local_branch && ! ours; then
-  echo "tui_repo: $branch exists locally with other work and no pull request, so phase 0 was left alone"
+  if [ "$(ahead)" = 0 ]; then
+    echo "tui_repo: $branch exists locally with no commit of its own but is not checked out at $wt, so phase 0 was left alone"
+  else
+    echo "tui_repo: $branch exists locally with other work and no pull request, so phase 0 was left alone"
+  fi
 fi
 if [ -z "$url" ] && ! local_branch && remote_branch; then
   cat <<EOF
@@ -1120,6 +1165,9 @@ EOF
 fi
 if ! scaffold_on_main; then
   echo "After merging the pull request, rerun tui_repo $name to require the remaining checks."
+fi
+if ruleset_all; then
+  echo "tui_repo: the main ruleset $known_ruleset_label covers every branch, so requiring check and audit would refuse the first push of $branch; it was left as is"
 fi
 if ruleset_inactive; then
   echo "tui_repo: the main ruleset $known_ruleset_label is $known_enforcement, not active, so it enforces nothing; it was left as is"

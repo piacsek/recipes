@@ -1718,6 +1718,138 @@ test_a_repository_with_other_branches_but_no_main_is_refused_before_anything_cha
   refute_exists "$HOME/.config/acme-tool-dev"
 }
 
+test_a_relative_projects_dir_opens_the_pull_request() {
+  sandbox
+  (cd "$SCRATCH" && PROJECTS=projects flow >/dev/null)
+  assert_eq "$(jq length "$FAKE_STATE/prs.json")" "1"
+}
+
+test_a_relative_projects_dir_puts_the_worktree_in_the_project() {
+  sandbox
+  (cd "$SCRATCH" && PROJECTS=projects flow >/dev/null)
+  assert_file "$PROJECT/.claude/worktrees/phase-0-foundations/scripts/ship.sh"
+  refute_exists "$PROJECT/projects"
+}
+
+test_a_relative_tmpdir_opens_the_pull_request() {
+  sandbox
+  (cd "$SCRATCH" && TMP_DIR=tmp flow >/dev/null)
+  assert_eq "$(jq length "$FAKE_STATE/prs.json")" "1"
+}
+
+test_a_relative_chrome_takes_the_screenshot() {
+  sandbox
+  (cd "$SCRATCH" && CHROME=bin/chrome flow >/dev/null)
+  assert_eq "$(remote_git cat-file -t "$(phase_0_commit):docs/help.png")" "blob"
+}
+
+test_a_relative_home_opens_the_pull_request() {
+  sandbox
+  (cd "$SCRATCH" && GIT_CONFIG_GLOBAL="$SCRATCH/home/.gitconfig" HOME=home flow >/dev/null)
+  assert_eq "$(jq length "$FAKE_STATE/prs.json")" "1"
+}
+
+test_a_relative_home_links_the_denylist_under_the_absolute_home() {
+  sandbox
+  (cd "$SCRATCH" && GIT_CONFIG_GLOBAL="$SCRATCH/home/.gitconfig" HOME=home flow >/dev/null)
+  assert_eq "$(readlink "$SCRATCH/home/.config/acme-tool-dev/denylist")" "$SCRATCH/shared/denylist"
+}
+
+test_a_step_planned_but_found_done_stops_the_run() {
+  sandbox
+  set +e
+  FAKE_GH_FAIL="label create" flow >/dev/null 2>&1
+  labels_appear_meanwhile
+  output="$(FAKE_GH_ONCE_AFTER="label list" FAKE_GH_ONCE_RUN="$SCRATCH/meanwhile" flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "tui_repo: the plan said labels would run, but it was already done when its turn came"
+  refute_exists "$PROJECT/.claude/worktrees/phase-0-foundations"
+}
+
+test_a_level_branch_without_its_worktree_is_not_called_other_work() {
+  sandbox
+  interrupt_render_after 3 3
+  git -C "$PROJECT" worktree remove --force "$PROJECT/.claude/worktrees/phase-0-foundations"
+  output="$(flow 2>&1)"
+  refute_contains "$output" "with other work"
+}
+
+test_a_level_branch_without_its_worktree_says_where_the_worktree_belongs() {
+  sandbox
+  interrupt_render_after 3 3
+  git -C "$PROJECT" worktree remove --force "$PROJECT/.claude/worktrees/phase-0-foundations"
+  assert_contains "$(flow 2>&1)" "tui_repo: phase-0-foundations exists locally with no commit of its own but is not checked out at $PROJECT/.claude/worktrees/phase-0-foundations, so phase 0 was left alone"
+}
+
+test_flow_shows_the_resolved_inputs_before_asking() {
+  sandbox
+  output="$(flow)"
+  assert_contains "$output" "  name: acme-tool"
+  assert_contains "$output" "  description: Keeps the acme fleet in line"
+  assert_contains "$output" "  owner: acme"
+  assert_contains "$output" "  tap: acme/homebrew-tap"
+  assert_contains "$output" "  author: Acme Author"
+}
+
+test_an_ignored_file_at_a_rendered_path_stops_the_render() {
+  sandbox
+  interrupt_render_after 1 3
+  printf 'mine\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/tests/toolchain.rs"
+  printf 'tests/toolchain.rs\n' >>"$PROJECT/.git/info/exclude"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the phase 0 worktree holds changes the render would not write: tests/toolchain.rs"
+  assert_eq "$(cat "$PROJECT/.claude/worktrees/phase-0-foundations/tests/toolchain.rs")" "mine"
+}
+
+test_the_plan_states_the_enforcement_of_an_evaluating_ruleset() {
+  sandbox
+  set +e
+  FAKE_GH_FAIL="label create" flow >/dev/null 2>&1
+  set -e
+  evaluate_the_ruleset
+  flow >/dev/null
+  plan_file="$(remote_git show phase-0-foundations:plans/phase-0-foundations.md)"
+  assert_contains "$plan_file" "- The \`main\` ruleset (id 777) lists \`check\` and \`audit\` as required, but its enforcement is \`evaluate\`, so it enforces nothing yet."
+  refute_contains "$plan_file" "exists and requires"
+}
+
+test_flow_adds_no_checks_to_a_ruleset_covering_every_branch() {
+  sandbox
+  ruleset_by_hand_including '"~ALL"'
+  flow >/dev/null
+  assert_eq "$(jq '.[0].rules | length' "$FAKE_STATE/rulesets.json")" "0"
+}
+
+test_flow_says_in_the_plan_that_a_ruleset_covering_every_branch_is_left_as_is() {
+  sandbox
+  ruleset_by_hand_including '"refs/heads/*"'
+  assert_contains "$(flow)" "  main ruleset: already done (ruleset 900 \"everything\" covers every branch, so requiring checks would refuse the first push of phase-0-foundations; left as is)"
+}
+
+test_flow_says_at_the_end_that_a_ruleset_covering_every_branch_was_left_as_is() {
+  sandbox
+  ruleset_by_hand_including '"refs/heads/**"'
+  assert_contains "$(flow)" "tui_repo: the main ruleset 900 \"everything\" covers every branch, so requiring check and audit would refuse the first push of phase-0-foundations; it was left as is"
+}
+
+test_the_plan_states_that_a_ruleset_covering_every_branch_requires_nothing_from_tui_repo() {
+  sandbox
+  ruleset_by_hand_including '"~ALL"'
+  flow >/dev/null
+  assert_contains "$(remote_git show phase-0-foundations:plans/phase-0-foundations.md)" "- The ruleset that protects \`main\` (id 900) covers every branch, so \`tui_repo\` left it as it is and added no required checks."
+}
+
+test_flow_says_nothing_about_every_branch_for_a_main_ruleset() {
+  sandbox
+  refute_contains "$(flow)" "covers every branch"
+}
+
 test_a_repository_with_an_edited_bootstrap_readme_is_refused() {
   sandbox
   old_bootstrap_on_main
@@ -2149,4 +2281,13 @@ ruleset_by_hand_including() {
 evaluate_the_ruleset() {
   jq 'map(.enforcement = "evaluate")' "$FAKE_STATE/rulesets.json" >"$SCRATCH/rulesets.json"
   mv "$SCRATCH/rulesets.json" "$FAKE_STATE/rulesets.json"
+}
+
+labels_appear_meanwhile() {
+  cat >"$SCRATCH/meanwhile" <<'EOF'
+#!/bin/sh
+jq '. + [{"name": "adversarial-review-finding"}, {"name": "development-cycle-improvement"}, {"name": "Type: Maintenance"}]' "$FAKE_STATE/labels.json" >"$FAKE_STATE/labels.next"
+mv "$FAKE_STATE/labels.next" "$FAKE_STATE/labels.json"
+EOF
+  chmod +x "$SCRATCH/meanwhile"
 }

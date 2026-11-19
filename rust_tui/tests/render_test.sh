@@ -138,6 +138,16 @@ test_a_name_shared_with_a_test_helper_is_accepted() {
   assert_status "$status" 0
 }
 
+test_a_relative_render_only_directory_is_reported_absolute() {
+  output="$(cd "$SCRATCH" && render_env acme-tool "$DESCRIPTION" "$TUI_REPO" --render-only out 2>&1)"
+  assert_contains "$output" "rendered acme-tool into $SCRATCH/out"
+}
+
+test_a_relative_render_only_directory_renders_there() {
+  (cd "$SCRATCH" && render_env acme-tool "$DESCRIPTION" "$TUI_REPO" --render-only out >/dev/null 2>&1)
+  assert_file "$SCRATCH/out/Cargo.toml"
+}
+
 test_a_dev_dependency_name_is_refused() {
   set +e
   output="$(render_env tempfile "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"

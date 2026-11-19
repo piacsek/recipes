@@ -24,8 +24,12 @@ scaffold is not on `main`) and the `TAP_TOKEN` instructions.
 | LICENSE author | `--author` | `TUI_REPO_AUTHOR` | `git config user.name` |
 | Skip the confirmation | `--yes` | `TUI_REPO_YES=1` | asks |
 | Projects directory | | `PROJECTS_DIR` | `~/projects` |
-| Shared denylist | | `TUI_REPO_SHARED_DENYLIST` (a relative path is taken from the current directory) | `~/.config/conveyor-dev/denylist` |
+| Shared denylist | | `TUI_REPO_SHARED_DENYLIST` | `~/.config/conveyor-dev/denylist` |
 | Chrome binary | | `CHROME` | Google Chrome, then `google-chrome`, then `chromium` |
+
+Every path the script is given (`PROJECTS_DIR`, `TUI_REPO_SHARED_DENYLIST`, `--render-only`,
+`CHROME`, `TMPDIR` and `HOME`) is made absolute from the current directory once, before anything
+is checked, so a relative path behaves exactly as its absolute form.
 
 `--render-only <empty dir>` renders the template there (and runs `cargo fmt`) without touching git,
 GitHub or `~/.config`.
@@ -50,6 +54,9 @@ The name, description, owner, tap and author are matched against the denylist (t
 blank lines. Each input that matches is named and the run stops; the list and the matching line are
 never printed. An existing `~/.config/<name>-dev/denylist` must resolve to a readable, non-empty
 file, and the run says it does.
+
+Before asking `Go ahead?`, the script prints the name, description, owner, tap and author it
+resolved, then each step with what it would do.
 
 Every probe of GitHub or git tells "confirmed absent" (a 404, an unset origin) from "could not find
 out" (any other failure). The second stops the run, naming what it could not find out, before
@@ -84,7 +91,8 @@ as a second commit. It never merges and never marks the pull request ready.
 ## Idempotency
 
 Every step checks the real state first and prints `==> <step>: already done, skipped` when there is
-nothing to do. Rerunning after a failure finishes the job; rerunning on a finished project changes
+nothing to do. A step the plan said would run that turns out done when its turn comes means
+something changed it meanwhile: the run stops and names the step. Rerunning after a failure finishes the job; rerunning on a finished project changes
 nothing and exits 0.
 
 - An existing `<owner>/<name>` is taken over only when this recipe started it: it has no branch,
@@ -103,7 +111,10 @@ nothing and exits 0.
 - The ruleset is found by what it protects: a ruleset whose source is this repository, whose target
   is `branch` and whose conditions include `~DEFAULT_BRANCH`, `~ALL`, `refs/heads/main`,
   `refs/heads/*` or `refs/heads/**`, whatever its name. The listing is read page by page. A matching
-  ruleset whose enforcement is not `active` is left as is, and the plan and the closing lines say so. It is created only when none matches and never replaced; when more than one matches, the
+  ruleset whose enforcement is not `active` is left as is, and the plan and the closing lines say so.
+  A matching ruleset that includes `~ALL`, `refs/heads/*` or `refs/heads/**` covers every branch:
+  requiring `check` and `audit` there would refuse the first push of `phase-0-foundations`, so no
+  check is added, and the plan, the closing lines and the phase 0 plan's facts say so. It is created only when none matches and never replaced; when more than one matches, the
   run names them and stops before any change.
   A rerun adds whichever of `check` and `audit` is missing, and, once `main` holds
   `scripts/ship.sh`, `version`, after the checks already there, and says what it added. It never
@@ -121,7 +132,8 @@ nothing and exits 0.
 - The render goes to a fresh temporary directory first and is compared with the worktree. Files
   that already match are kept, missing or partial ones are copied in, and the render step counts as
   done only when every rendered file matches. A worktree change the render would not write (an
-  untracked file, an edit to a tracked or rendered file) stops the run and names its paths. The
+  untracked file, an edit to a tracked or rendered file, or a file at a rendered path that git does
+  not track, ignored ones included) stops the run and names its paths. The
   fresh render is formatted with `cargo fmt` first, so it equals what `scripts/ship.sh` formats.
 - `tests/flow_test.sh` fails every side-effecting step once and, separately, kills the script right
   after it, then checks that a rerun ends in the same state as an uninterrupted run.
@@ -198,7 +210,11 @@ The fakes stand in for these; no test has run them against github.com:
 - A blank line in a denylist makes the rendered scrub check refuse every ship, which fails safe.
 - The closing `TAP_TOKEN` instructions use `pbpaste`: the recipe targets the owner's Mac.
 - Rulesets are recognised by the literal include patterns `~DEFAULT_BRANCH`, `~ALL`,
-  `refs/heads/main`, `refs/heads/*` and `refs/heads/**`; excludes are not evaluated.
+  `refs/heads/main`, `refs/heads/*` and `refs/heads/**`; excludes are not evaluated, so a ruleset
+  that includes an all-branch pattern is left as is even when it excludes `phase-0-foundations`.
+- The rendered `AGENTS.md` rule (the unsuffixed binary on PATH is the Homebrew release; never
+  `cargo install` the crate into PATH) is for people developing the project, as in conveyor, and
+  stands beside the README's source install for users.
 
 ## Bash
 
