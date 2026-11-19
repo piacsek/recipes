@@ -245,16 +245,72 @@ origin_of() {
   esac
 }
 
+our_origin() {
+  case "$origin" in
+    "git@github.com:$repo.git" | "https://github.com/$repo" | "https://github.com/$repo.git") return 0 ;;
+  esac
+  return 1
+}
+
 is_clone() {
   local top
   top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
   [ -n "$top" ] || return 1
   [ "$(cd "$top" && pwd -P)" = "$(cd "$dir" && pwd -P)" ] || return 1
+  git -C "$dir" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 1
   origin_of "$dir"
-  case "$origin" in
-    "git@github.com:$repo.git" | "https://github.com/$repo" | "https://github.com/$repo.git") return 0 ;;
-  esac
-  return 1
+  our_origin
+}
+
+write_bootstrap() {
+  mkdir -p "$1/.github/workflows"
+  printf '# %s\n' "$name" >"$1/README.md"
+  render "$1" LICENSE
+  render "$1" CHANGELOG.md
+  cat >"$1/.github/workflows/ci.yml" <<'EOF'
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "replace this step with the project's gates"
+EOF
+}
+
+half_bootstrap() {
+  local rel
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  if [ -e "$dir/.git" ] || [ -L "$dir/.git" ]; then
+    [ -d "$dir/.git" ] && [ ! -L "$dir/.git" ] || return 1
+    ! git -C "$dir" rev-parse -q --verify HEAD >/dev/null 2>&1 || return 1
+    origin_of "$dir"
+    [ -z "$origin" ] || our_origin || return 1
+  fi
+  rm -rf "$work/bootstrap"
+  mkdir "$work/bootstrap"
+  write_bootstrap "$work/bootstrap"
+  (cd "$dir" && find . -path ./.git -prune -o -print) >"$work/present"
+  while IFS= read -r rel; do
+    rel="${rel#./}"
+    case "$rel" in
+      . | .git) continue ;;
+      .github | .github/workflows)
+        [ -d "$dir/$rel" ] && [ ! -L "$dir/$rel" ] || return 1
+        continue
+        ;;
+    esac
+    [ -f "$work/bootstrap/$rel" ] && [ -f "$dir/$rel" ] && [ ! -L "$dir/$rel" ] && cmp -s "$work/bootstrap/$rel" "$dir/$rel" || return 1
+  done <"$work/present"
 }
 
 find_chrome() {
@@ -450,27 +506,7 @@ do_local() {
   [ -d "$dir/.git" ] || git -C "$dir" init -q --initial-branch main
   origin_of "$dir"
   [ -n "$origin" ] || git -C "$dir" remote add origin "$remote_url"
-  printf '# %s\n' "$name" >"$dir/README.md"
-  render "$dir" LICENSE
-  render "$dir" CHANGELOG.md
-  cat >"$dir/.github/workflows/ci.yml" <<'EOF'
-name: ci
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-
-permissions:
-  contents: read
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - run: echo "replace this step with the project's gates"
-EOF
+  write_bootstrap "$dir"
   git -C "$dir" add -A
   git -C "$dir" commit -q -m "Bootstrap"
 }
@@ -633,14 +669,10 @@ do_worktree() {
   git -C "$dir" worktree add -q --no-track -b "$branch" "$wt" origin/main
 }
 
-plan_render() {
-  plan=""
-  phase0_active || return 0
-  [ "$(ahead)" = 0 ] || return 0
-  [ -f "$wt/scripts/ship.sh" ] || plan="render the rust_tui template into the worktree"
-}
+render_missing=""
+render_foreign=""
 
-do_render() {
+fresh_render() {
   local files
   files="$(git -C "$wt" ls-tree -r --name-only origin/main | LC_ALL=C sort | tr '\n' ' ')"
   [ "$files" = ".github/workflows/ci.yml CHANGELOG.md LICENSE README.md " ] ||
@@ -648,8 +680,58 @@ do_render() {
   load_ruleset
   ruleset_id="$known_ruleset"
   main_sha="$(git -C "$wt" rev-parse --short origin/main)"
-  start="$(perl -MPOSIX -e 'print strftime("%Y-%m-%d %H:%M:%SZ", gmtime($ARGV[0]))' "$(git -C "$dir" reflog show --format=%ct "refs/heads/$branch" | tail -n 1)")"
-  render "$wt"
+  git -C "$dir" reflog show --format=%ct "refs/heads/$branch" >"$work/reflog"
+  start="$(perl -MPOSIX -e 'print strftime("%Y-%m-%d %H:%M:%SZ", gmtime($ARGV[0]))' "$(tail -n 1 "$work/reflog")")"
+  date="${start%% *}"
+  year="${start%%-*}"
+  rm -rf "$work/render"
+  mkdir "$work/render"
+  render "$work/render"
+}
+
+compare_render() {
+  local entry rel
+  render_missing=""
+  render_foreign=""
+  git -C "$wt" status --porcelain -z --untracked-files=all >"$work/status"
+  while IFS= read -r -d '' entry; do
+    rel="${entry:3}"
+    case "$rel" in docs/help.png | *.tui_repo-partial) continue ;; esac
+    if [ -f "$work/render/$rel" ] && [ -f "$wt/$rel" ] && cmp -s "$work/render/$rel" "$wt/$rel"; then
+      continue
+    fi
+    render_foreign="$render_foreign $rel"
+  done <"$work/status"
+  (cd "$work/render" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) >"$work/rendered"
+  while IFS= read -r rel; do
+    cmp -s "$work/render/$rel" "$wt/$rel" 2>/dev/null || render_missing="$render_missing$rel"$'\n'
+  done <"$work/rendered"
+}
+
+plan_render() {
+  plan=""
+  phase0_active || return 0
+  [ "$(ahead)" = 0 ] || return 0
+  if [ -d "$wt" ]; then
+    fresh_render
+    compare_render
+    [ -z "$render_foreign" ] || die "the phase 0 worktree holds changes the render would not write:$render_foreign; move them away and rerun"
+    [ -n "$render_missing" ] || return 0
+  fi
+  plan="render the rust_tui template into the worktree"
+}
+
+do_render() {
+  local rel
+  find "$wt" -name '*.tui_repo-partial' -type f -exec rm -f {} +
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    mkdir -p "$(dirname "$wt/$rel")"
+    cp -p "$work/render/$rel" "$wt/$rel.tui_repo-partial"
+    mv -f "$wt/$rel.tui_repo-partial" "$wt/$rel"
+  done <<EOF
+$render_missing
+EOF
 }
 
 plan_screenshot() {
@@ -783,7 +865,7 @@ missing_tools() {
   command -v cargo >/dev/null || echo "cargo is missing: install Rust with rustup (https://rustup.rs)"
 }
 
-if [ -e "$dir" ] && ! is_clone; then
+if { [ -e "$dir" ] || [ -L "$dir" ]; } && ! is_clone && ! half_bootstrap; then
   die "$dir exists and is not a clone of $repo; move it away or pick another name"
 fi
 if [ ! -e "$link" ] && [ ! -L "$link" ] && [ ! -f "$shared_denylist" ]; then

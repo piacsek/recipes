@@ -784,6 +784,233 @@ test_a_failed_secret_probe_prints_no_tap_token_steps() {
   refute_contains "$output" "pbpaste"
 }
 
+test_rerun_after_a_render_cut_at_one_third_ships_every_file() {
+  sandbox
+  interrupt_render_after 1 3
+  flow >/dev/null
+  assert_eq "$(shipped_file_count)" "$(($(template_file_count) + 1))"
+}
+
+test_rerun_after_a_render_cut_at_two_thirds_ships_every_file() {
+  sandbox
+  interrupt_render_after 2 3
+  flow >/dev/null
+  assert_eq "$(shipped_file_count)" "$(($(template_file_count) + 1))"
+}
+
+test_rerun_after_a_render_cut_at_two_thirds_renders_again() {
+  sandbox
+  interrupt_render_after 2 3
+  assert_contains "$(flow)" "==> phase 0 render: render the rust_tui template into the worktree"
+}
+
+test_rerun_after_a_finished_render_skips_the_render() {
+  sandbox
+  interrupt_render_after 3 3
+  assert_contains "$(flow)" "==> phase 0 render: already done, skipped"
+}
+
+test_a_foreign_untracked_file_in_the_worktree_stops_the_render() {
+  sandbox
+  interrupt_render_after 1 3
+  printf 'mine\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/notes.txt"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the phase 0 worktree holds changes the render would not write: notes.txt"
+  refute_exists "$PROJECT/.claude/worktrees/phase-0-foundations/scripts/ship.sh"
+}
+
+test_a_foreign_edit_to_a_tracked_file_stops_the_render() {
+  sandbox
+  interrupt_render_after 1 3
+  printf 'mine\n' >>"$PROJECT/.claude/worktrees/phase-0-foundations/README.md"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the phase 0 worktree holds changes the render would not write: README.md"
+  refute_exists "$PROJECT/.claude/worktrees/phase-0-foundations/scripts/ship.sh"
+}
+
+test_a_foreign_edit_to_a_rendered_file_stops_the_render() {
+  sandbox
+  interrupt_render_after 1 3
+  printf 'mine\n' >>"$PROJECT/.claude/worktrees/phase-0-foundations/Cargo.toml"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "Cargo.toml"
+  refute_contains "$output" "==> phase 0 pull request"
+}
+
+test_a_bootstrap_cut_after_an_empty_directory_is_finished() {
+  sandbox
+  half_bootstrap 0
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_the_workflows_directory_is_finished() {
+  sandbox
+  half_bootstrap 1
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_git_init_is_finished() {
+  sandbox
+  half_bootstrap 2
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_the_origin_is_finished() {
+  sandbox
+  half_bootstrap 3
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_the_readme_is_finished() {
+  sandbox
+  half_bootstrap 4
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_the_license_is_finished() {
+  sandbox
+  half_bootstrap 5
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_the_changelog_is_finished() {
+  sandbox
+  half_bootstrap 6
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_the_ci_workflow_is_finished() {
+  sandbox
+  half_bootstrap 7
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_bootstrap_cut_after_staging_is_finished() {
+  sandbox
+  half_bootstrap 8
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_eq "$(remote_git log -1 --format=%s main)" "Bootstrap"
+}
+
+test_a_half_bootstrap_with_an_https_origin_is_finished() {
+  sandbox
+  half_bootstrap 3
+  git -C "$PROJECT" remote set-url origin https://github.com/acme/acme-tool.git
+  git config --global --add url."$SCRATCH/remotes/".insteadOf "https://github.com/"
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+}
+
+test_a_half_bootstrap_with_an_edited_readme_is_refused() {
+  sandbox
+  half_bootstrap 6
+  printf 'mine\n' >>"$PROJECT/README.md"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "is not a clone of acme/acme-tool"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_a_half_bootstrap_with_a_foreign_file_and_the_right_origin_is_refused() {
+  sandbox
+  half_bootstrap 3
+  printf 'mine\n' >"$PROJECT/notes.txt"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "is not a clone of acme/acme-tool"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_a_half_bootstrap_with_another_origin_is_refused() {
+  sandbox
+  half_bootstrap 2
+  git -C "$PROJECT" remote add origin git@github.com:acme/other.git
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "is not a clone of acme/acme-tool"
+}
+
+test_a_directory_with_a_commit_but_no_origin_is_refused() {
+  sandbox
+  half_bootstrap 8
+  git -C "$PROJECT" remote remove origin
+  git -C "$PROJECT" commit -q -m mine
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "is not a clone of acme/acme-tool"
+}
+
 sandbox() {
   local tool real
   mkdir -p "$SCRATCH/bin" "$SCRATCH/shared" "$SCRATCH/projects" "$SCRATCH/remotes"
@@ -930,4 +1157,55 @@ Before merging the pull request, set TAP_TOKEN (the release needs it to write th
 2. Copy the token, then run:
    pbpaste | gh secret set TAP_TOKEN --repo acme/acme-tool
 EOF
+}
+
+interrupt_render_after() {
+  local wt="$PROJECT/.claude/worktrees/phase-0-foundations" total keep
+  set +e
+  FAKE_CHROME_FAIL=1 flow >/dev/null 2>&1
+  set -e
+  total="$(template_file_count)"
+  keep=$((total * $1 / $2))
+  (cd "$RECIPE/templates" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) | tail -n +$((keep + 1)) >"$SCRATCH/cut"
+  while IFS= read -r rel; do
+    if git -C "$wt" cat-file -e "origin/main:$rel" 2>/dev/null; then
+      git -C "$wt" checkout -q origin/main -- "$rel"
+    else
+      rm "$wt/$rel"
+    fi
+  done <"$SCRATCH/cut"
+}
+
+template_file_count() {
+  find "$RECIPE/templates" -type f | wc -l | tr -d ' '
+}
+
+shipped_file_count() {
+  remote_git ls-tree -r --name-only "$(phase_0_commit)" | wc -l | tr -d ' '
+}
+
+half_bootstrap() {
+  local reference="$SCRATCH/reference"
+  set +e
+  FAKE_GH_FAIL="repo create" flow >/dev/null 2>&1
+  set -e
+  cp -R "$PROJECT" "$reference"
+  rm -rf "$PROJECT" "$reference/.git"
+  mkdir "$PROJECT"
+  [ "$1" -ge 1 ] || return 0
+  mkdir -p "$PROJECT/.github/workflows"
+  [ "$1" -ge 2 ] || return 0
+  git -C "$PROJECT" init -q --initial-branch main
+  [ "$1" -ge 3 ] || return 0
+  git -C "$PROJECT" remote add origin git@github.com:acme/acme-tool.git
+  [ "$1" -ge 4 ] || return 0
+  cp "$reference/README.md" "$PROJECT/README.md"
+  [ "$1" -ge 5 ] || return 0
+  cp "$reference/LICENSE" "$PROJECT/LICENSE"
+  [ "$1" -ge 6 ] || return 0
+  cp "$reference/CHANGELOG.md" "$PROJECT/CHANGELOG.md"
+  [ "$1" -ge 7 ] || return 0
+  cp "$reference/.github/workflows/ci.yml" "$PROJECT/.github/workflows/ci.yml"
+  [ "$1" -ge 8 ] || return 0
+  git -C "$PROJECT" add -A
 }
