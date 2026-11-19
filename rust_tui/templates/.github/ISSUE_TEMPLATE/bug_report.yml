@@ -1,0 +1,34 @@
+name: Bug report
+description: Something {{name}} does is wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Do not paste private organisation or repository names, logins or hostnames. Replace them with `acme/*` or `<owner>/<repo>`, in screenshots too.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to see it
+      description: The command you ran, with its arguments.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What `{{name}} --version` prints.
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Operating system and terminal
+      placeholder: macOS 26, Ghostty inside tmux

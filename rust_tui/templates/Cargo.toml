@@ -1,0 +1,26 @@
+[package]
+name = "{{name}}"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "{{description}}"
+repository = "https://github.com/{{owner}}/{{name}}"
+
+[dev-dependencies]
+tempfile = "3"
+toml = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+cast_lossless = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

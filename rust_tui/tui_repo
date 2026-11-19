@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${BASH_VERSINFO[0]}" -lt 3 ] || { [ "${BASH_VERSINFO[0]}" -eq 3 ] && [ "${BASH_VERSINFO[1]}" -lt 2 ]; }; then
+  echo "tui_repo: needs bash 3.2 or newer, this is $BASH_VERSION" >&2
+  exit 1
+fi
+
+recipe="$(cd "$(dirname "$0")" && pwd)"
+templates="$recipe/templates"
+keys="name snake upper class owner tap_repo tap description author year ruleset_id date main_sha start pr_ref draft_pr"
+
+usage() {
+  cat <<'EOF'
+usage: tui_repo [<name>] [--description <text>] [--owner <login>] [--tap <owner>/homebrew-<tap>]
+                [--author <name>] [--yes] [--render-only <dir>]
+
+Every value can also come from the environment: TUI_REPO_NAME, TUI_REPO_DESCRIPTION,
+TUI_REPO_OWNER, TUI_REPO_TAP, TUI_REPO_AUTHOR, TUI_REPO_YES=1. What is missing is asked for.
+EOF
+}
+
+die() {
+  printf 'tui_repo: %s\n' "$1" >&2
+  exit 1
+}
+
+name="${TUI_REPO_NAME:-}"
+description="${TUI_REPO_DESCRIPTION:-}"
+owner="${TUI_REPO_OWNER:-}"
+tap_repo="${TUI_REPO_TAP:-}"
+author="${TUI_REPO_AUTHOR:-}"
+yes="${TUI_REPO_YES:-}"
+render_only=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --description | --owner | --tap | --author | --render-only)
+      [ $# -ge 2 ] || { usage >&2; exit 2; }
+      case "$1" in
+        --description) description="$2" ;;
+        --owner) owner="$2" ;;
+        --tap) tap_repo="$2" ;;
+        --author) author="$2" ;;
+        --render-only) render_only="$2" ;;
+      esac
+      shift 2
+      ;;
+    --yes) yes=1; shift ;;
+    -h | --help) usage; exit 0 ;;
+    -*) usage >&2; exit 2 ;;
+    *) name="$1"; shift ;;
+  esac
+done
+
+ask() {
+  local answer=""
+  if [ -t 0 ]; then
+    if [ -n "$3" ]; then
+      printf '%s [%s]: ' "$2" "$3" >&2
+    else
+      printf '%s: ' "$2" >&2
+    fi
+  fi
+  IFS= read -r answer || answer=""
+  [ -n "$answer" ] || answer="$3"
+  printf -v "$1" '%s' "$answer"
+}
+
+reserved_names="as async await break const continue crate dyn else enum extern false fn for gen if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield try union test std core alloc proc-macro build deps examples incremental con prn aux nul com1 com2 com3 com4 com5 com6 com7 com8 com9 lpt1 lpt2 lpt3 lpt4 lpt5 lpt6 lpt7 lpt8 lpt9 stdout stderr version-line"
+
+name_problem() {
+  local pattern='^[a-z][a-z0-9]*(-[a-z0-9]+)*$' word
+  [ -n "$1" ] || { echo "no name given (pass it as the first argument or TUI_REPO_NAME)"; return; }
+  [[ $1 =~ $pattern ]] || { echo "name \"$1\": use a lowercase letter first, then lowercase letters, digits and single hyphens, no hyphen at the end"; return; }
+  [ "${#1}" -le 64 ] || { echo "name \"$1\": at most 64 characters"; return; }
+  for word in $reserved_names; do
+    [ "$1" != "$word" ] || { echo "name \"$1\": reserved (a Rust keyword, a name cargo or Windows refuses, or a helper name in tests/cli.rs)"; return; }
+  done
+}
+
+description_problem() {
+  local d="$1"
+  [ -n "$d" ] || { echo "no description given (TUI_REPO_DESCRIPTION or --description)"; return; }
+  case "$d" in *$'\n'* | *$'\r'*) echo "description: one line only"; return ;; esac
+  if printf '%s' "$d" | LC_ALL=C grep -q '[^ -~]'; then
+    echo "description: printable ASCII only (no accents, emoji, tabs or control characters)"
+    return
+  fi
+  [ "${#d}" -le 80 ] || { echo "description: at most 80 characters (Homebrew's limit), this one has ${#d}"; return; }
+  case "$d" in [A-Z]*) ;; *) echo "description: start with a capital letter (Homebrew's rule; it also keeps the README line from turning into a heading or a list)"; return ;; esac
+  case "$d" in *.) echo "description: no full stop at the end (Homebrew's rule; the README adds one)"; return ;; esac
+  case "$d" in *' ') echo "description: no space at the end"; return ;; esac
+  case "$d" in *'"'*) echo "description: no double quote (\"), it ends the string in Cargo.toml, flake.nix, the formula and the Rust sources"; return ;; esac
+  case "$d" in *\\*) echo "description: no backslash (\\), it starts an escape in TOML, Nix, Ruby, Rust and the formula's heredoc"; return ;; esac
+  case "$d" in *'`'*) echo "description: no backtick (\`), it runs a command in the formula's heredoc"; return ;; esac
+  case "$d" in *'$'*) echo "description: no dollar sign (\$), it expands in the formula's heredoc and \${ interpolates in Nix"; return ;; esac
+  case "$d" in *'#{'* | *'#@'*) echo "description: no #{ or #@, Ruby interpolates them in the formula"; return ;; esac
+}
+
+owner_problem() {
+  local pattern='^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$'
+  [ -n "$1" ] || { echo "no GitHub owner given (TUI_REPO_OWNER or --owner)"; return; }
+  if ! [[ $1 =~ $pattern ]] || [ "${#1}" -gt 39 ]; then
+    echo "owner \"$1\": not a GitHub login (letters, digits and single hyphens, at most 39)"
+  fi
+}
+
+tap_problem() {
+  local pattern='^[A-Za-z0-9]+(-[A-Za-z0-9]+)*/homebrew-[A-Za-z0-9._-]+$'
+  [ -n "$1" ] || { echo "no tap repository given (TUI_REPO_TAP or --tap)"; return; }
+  [[ $1 =~ $pattern ]] || echo "tap \"$1\": must be <owner>/homebrew-<name>, the shape brew taps"
+}
+
+author_problem() {
+  [ -n "$1" ] || { echo "no author given for LICENSE (TUI_REPO_AUTHOR or --author)"; return; }
+  if printf '%s' "$1" | LC_ALL=C grep -q '[[:cntrl:]]' || [ "$(printf '%s\n' "$1" | wc -l | tr -d ' ')" != 1 ]; then
+    echo "author: one line, no control characters"
+  fi
+}
+
+[ -n "$name" ] || ask name "Name" ""
+problem="$(name_problem "$name")"
+[ -z "$problem" ] || die "$problem"
+[ -n "$description" ] || ask description "One-line description" ""
+if [ -z "$owner" ]; then
+  detected=""
+  [ -n "$render_only" ] || detected="$(gh api user --jq .login 2>/dev/null || true)"
+  ask owner "GitHub owner" "$detected"
+fi
+[ -n "$tap_repo" ] || ask tap_repo "Tap repository" "${owner:+$owner/homebrew-tap}"
+if [ -z "$author" ]; then
+  detected=""
+  [ -n "$render_only" ] || detected="$(git config user.name 2>/dev/null || true)"
+  ask author "Author for LICENSE" "$detected"
+fi
+
+problems="$(description_problem "$description")"$'\n'"$(owner_problem "$owner")"$'\n'"$(tap_problem "$tap_repo")"$'\n'"$(author_problem "$author")"
+problems="$(printf '%s\n' "$problems" | sed '/^$/d')"
+[ -z "$problems" ] || { printf '%s\n' "$problems" | sed 's/^/tui_repo: /' >&2; exit 1; }
+
+snake="${name//-/_}"
+upper="$(printf '%s' "$snake" | tr '[:lower:]' '[:upper:]')"
+class="$(printf '%s' "$name" | awk -F- '{ for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2) }')"
+tap="${tap_repo%%/*}/${tap_repo#*/homebrew-}"
+year="$(date -u +%Y)"
+date="$(date -u +%Y-%m-%d)"
+ruleset_id="${TUI_REPO_RULESET_ID:-unknown}"
+main_sha="${TUI_REPO_MAIN_SHA:-unknown}"
+start="${TUI_REPO_START:-unknown}"
+pr_ref=""
+draft_pr=""
+
+render() {
+  local out="$1" only="${2:-}"
+  export RT_name="$name" RT_snake="$snake" RT_upper="$upper" RT_class="$class" RT_owner="$owner" \
+    RT_tap_repo="$tap_repo" RT_tap="$tap" RT_description="$description" RT_author="$author" \
+    RT_year="$year" RT_ruleset_id="$ruleset_id" RT_date="$date" RT_main_sha="$main_sha" \
+    RT_start="$start" RT_pr_ref="$pr_ref" RT_draft_pr="$draft_pr"
+  RT_KEYS="$keys" RT_ONLY="$only" perl -e '
+    use strict;
+    use warnings;
+    use File::Find;
+    use File::Path qw(make_path);
+    my ($src, $out) = @ARGV;
+    my %v = map { $_ => $ENV{"RT_$_"} } split / /, $ENV{RT_KEYS};
+    my $alternation = join "|", map { quotemeta } keys %v;
+    my @files;
+    find({ no_chdir => 1, wanted => sub { push @files, $File::Find::name if -f $_ } }, $src);
+    for my $file (sort @files) {
+      (my $rel = $file) =~ s{^\Q$src\E/}{};
+      next if $ENV{RT_ONLY} ne "" && $rel ne $ENV{RT_ONLY};
+      open my $in, "<:raw", $file or die "$file: $!";
+      my $text = do { local $/; <$in> };
+      close $in;
+      $text =~ s/\{\{($alternation)\}\}/$v{$1}/g;
+      if ($rel eq "Cargo.lock") {
+        my $tail = $text =~ s/\n\z// ? "\n" : "";
+        my @chunks = split /\n\n/, $text;
+        my @head = grep { !/^\[\[package\]\]\n/ } @chunks;
+        my $i = 0;
+        my @packages = map { $_->[2] }
+          sort { $a->[0] cmp $b->[0] or $a->[1] <=> $b->[1] }
+          map { [ (/^name = "([^"]*)"/m)[0], $i++, $_ ] }
+          grep { /^\[\[package\]\]\n/ } @chunks;
+        $text = join("\n\n", @head, @packages) . $tail;
+      }
+      my $target = "$out/$rel";
+      (my $dir = $target) =~ s{/[^/]*\z}{};
+      make_path($dir);
+      open my $fh, ">:raw", $target or die "$target: $!";
+      print $fh $text;
+      close $fh;
+      chmod((stat $file)[2] & 0777, $target);
+    }
+  ' "$templates" "$out"
+}
+
+if [ -n "$render_only" ]; then
+  if [ -e "$render_only" ] && [ -n "$(ls -A "$render_only")" ]; then
+    die "$render_only is not empty"
+  fi
+  mkdir -p "$render_only"
+  render "$render_only"
+  if command -v cargo >/dev/null; then
+    (cd "$render_only" && cargo fmt)
+  else
+    echo "tui_repo: cargo is missing, so the render is not formatted; run cargo fmt in $render_only" >&2
+  fi
+  echo "rendered $name into $render_only"
+  exit 0
+fi
+
+repo=$owner/$name
+dir=${PROJECTS_DIR:-$HOME/projects}/$name
+
+if [ -e "$dir" ]; then
+  echo "tui_repo: $dir already exists" >&2
+  exit 1
+fi
+if gh api "repos/$repo" --silent 2>/dev/null; then
+  echo "tui_repo: $repo already exists on GitHub" >&2
+  exit 1
+fi
+
+if [ -z "$yes" ]; then
+  ask answer "Create $repo and $dir? [y/N]" ""
+  case "$answer" in y | Y | yes) ;; *) die "nothing created" ;; esac
+fi
+
+step() { printf '==> %s\n' "$1"; }
+trap 'echo "tui_repo: stopped at \"$current\"; $repo may exist half configured" >&2' ERR
+current="start"
+
+current="bootstrap commit"
+step "$current in $dir"
+mkdir -p "$dir/.github/workflows"
+cd "$dir"
+git init --quiet --initial-branch main
+printf '# %s\n' "$name" > README.md
+render "$dir" LICENSE
+cat > .github/workflows/ci.yml <<'EOF'
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "replace this step with the project's gates"
+EOF
+git add -A
+git commit --quiet --message "Bootstrap"
+
+current="create the public repository"
+step "$current $repo"
+gh repo create "$repo" --public >/dev/null
+git remote add origin "git@github.com:$repo.git"
+git push --quiet --set-upstream origin main
+
+current="repository settings"
+step "$current"
+gh api --silent -X PATCH "repos/$repo" --input - <<'EOF'
+{
+  "allow_squash_merge": true,
+  "allow_merge_commit": false,
+  "allow_rebase_merge": false,
+  "allow_auto_merge": false,
+  "allow_update_branch": false,
+  "delete_branch_on_merge": true,
+  "squash_merge_commit_title": "COMMIT_OR_PR_TITLE",
+  "squash_merge_commit_message": "COMMIT_MESSAGES",
+  "has_discussions": true,
+  "security_and_analysis": {
+    "secret_scanning": { "status": "enabled" },
+    "secret_scanning_push_protection": { "status": "enabled" }
+  }
+}
+EOF
+
+current="Actions token permissions"
+step "$current"
+gh api --silent -X PUT "repos/$repo/actions/permissions/workflow" \
+  -f default_workflow_permissions=read \
+  -F can_approve_pull_request_reviews=false
+
+current="main ruleset"
+step "$current"
+gh api --silent -X POST "repos/$repo/rulesets" --input - <<'EOF'
+{
+  "name": "main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "required_linear_history" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "allowed_merge_methods": ["squash"],
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0,
+        "required_review_thread_resolution": false
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "do_not_enforce_on_create": false,
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [{ "context": "check", "integration_id": 15368 }]
+      }
+    }
+  ]
+}
+EOF
+
+trap - ERR
+echo "done: https://github.com/$repo in $dir"

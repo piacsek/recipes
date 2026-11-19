@@ -1,0 +1,20 @@
+name: Feature request
+description: Something {{name}} should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is public. Do not paste private organisation or repository names, logins or hostnames. Replace them with `acme/*` or `<owner>/<repo>`, in screenshots too.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: What you do today, and what gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: What {{name}} could do instead.

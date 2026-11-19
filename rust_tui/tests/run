@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -uo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+
+files=()
+only=()
+for arg in "$@"; do
+  case "$arg" in
+    test_*) only+=("$arg") ;;
+  esac
+done
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    test_*) ;;
+    *) args+=("$arg") ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
+case "${1:-}" in
+  fast) shift ;;
+  gates) set -- slow_gates ;;
+  shellcheck)
+    cd "$here/.." || exit 1
+    exec shellcheck -x tui_repo tests/run tests/lib.sh tests/*_test.sh tests/fakes/*
+    ;;
+esac
+if [ $# -eq 0 ]; then
+  for file in "$here"/*_test.sh; do
+    case "$(basename "$file")" in
+      slow_*) ;;
+      *) files+=("$file") ;;
+    esac
+  done
+else
+  for arg in "$@"; do
+    files+=("$here/${arg%_test.sh}_test.sh")
+  done
+fi
+
+passed=0
+failed=0
+for file in "${files[@]}"; do
+  tests="$(bash -c 'source "$1"; declare -F' _ "$file" | awk '$3 ~ /^test_/ { print $3 }')"
+  for name in $tests; do
+    if [ ${#only[@]} -gt 0 ] && ! printf '%s\n' "${only[@]}" | grep -qx "$name"; then
+      continue
+    fi
+    if output="$(bash -c 'set -euo pipefail; source "$1"; source "$2"; scratch_setup; trap scratch_teardown EXIT; "$3"' _ "$here/lib.sh" "$file" "$name" 2>&1)"; then
+      passed=$((passed + 1))
+      printf 'ok   %s %s\n' "$(basename "$file" .sh)" "$name"
+      printf '%s\n' "$output" | sed -n 's/^note: /     /p'
+    else
+      failed=$((failed + 1))
+      printf 'FAIL %s %s\n%s\n' "$(basename "$file" .sh)" "$name" "$output" | sed '3,$s/^/     /'
+    fi
+  done
+done
+printf '%s passed, %s failed\n' "$passed" "$failed"
+[ "$failed" -eq 0 ]

@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+printf '%s cargo %s\n' "$PWD" "$*" >>"${FAKE_LOG:-/dev/null}"

@@ -1,0 +1,235 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fetch every release tag
+        run: git fetch --force origin '+refs/tags/v*:refs/tags/v*'
+      - name: Resume the newest tag or tag what is pending
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/release-tag.sh >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - os: ubuntu-latest
+            targets: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    env:
+      TARGETS: ${{ matrix.targets }}
+      VERSION: ${{ needs.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+      - name: Is the tag still unfinished
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: scripts/release-unfinished.sh "$TAG" >> "$GITHUB_OUTPUT"
+      - name: Tag must match Cargo.toml version
+        if: steps.state.outputs.unfinished == 'true'
+        run: |
+          manifest="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          test "$manifest" = "$VERSION" || { echo "tag v$VERSION != Cargo.toml $manifest"; exit 1; }
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # master 2026-09
+        if: steps.state.outputs.unfinished == 'true'
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.targets }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        if: steps.state.outputs.unfinished == 'true'
+      - name: Build
+        if: steps.state.outputs.unfinished == 'true'
+        run: |
+          args=()
+          for target in ${TARGETS//,/ }; do args+=(--target "$target"); done
+          cargo build --release --locked "${args[@]}"
+      - name: Package
+        if: steps.state.outputs.unfinished == 'true'
+        run: |
+          for target in ${TARGETS//,/ }; do
+            name="{{name}}-$target"
+            tar czf "$name.tar.gz" -C "target/$target/release" {{name}}
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.state.outputs.unfinished == 'true'
+        with:
+          name: ${{ matrix.os }}
+          path: {{name}}-*.tar.gz*
+
+  publish:
+    needs: [tag, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.tag.outputs.tag }}
+          sparse-checkout: scripts
+      - name: Is the tag still unfinished
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: scripts/release-unfinished.sh "$TAG" >> "$GITHUB_OUTPUT"
+      - name: Name the release before this one
+        id: previous
+        if: steps.state.outputs.unfinished == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: scripts/previous-tag.sh "$TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: steps.state.outputs.unfinished == 'true'
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        if: steps.state.outputs.unfinished == 'true' && !github.event.repository.private
+        with:
+          subject-path: dist/*.tar.gz
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        if: steps.state.outputs.unfinished == 'true'
+        with:
+          tag_name: ${{ needs.tag.outputs.tag }}
+          files: dist/*
+          generate_release_notes: true
+          previous_tag: ${{ steps.previous.outputs.previous_tag }}
+
+  tap:
+    needs: [tag, publish]
+    if: ${{ !cancelled() && github.repository == '{{owner}}/{{name}}' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: tap
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          sparse-checkout: scripts
+      - name: Pick the version the formula should name
+        id: formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/formula-version.sh >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: steps.formula.outputs.version != ''
+        with:
+          repository: {{tap_repo}}
+          token: ${{ secrets.TAP_TOKEN }}
+          path: tap
+      - name: Update formula
+        if: steps.formula.outputs.version != ''
+        env:
+          VERSION: ${{ steps.formula.outputs.version }}
+        run: |
+          scripts/homebrew-formula.sh "$VERSION" > tap/Formula/{{name}}.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/{{name}}.rb
+          git diff --cached --quiet || git commit -m "{{name}} $VERSION"
+          git push
+
+  stable-build:
+    needs: [tag, publish]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.built.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+      - name: Pick the release stable should point at
+        id: stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/stable-version.sh >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: steps.stable.outputs.version != ''
+        with:
+          ref: v${{ steps.stable.outputs.version }}
+          path: release
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        if: steps.stable.outputs.version != ''
+      - name: The flake at the tag builds that version
+        id: built
+        if: steps.stable.outputs.version != ''
+        env:
+          VERSION: ${{ steps.stable.outputs.version }}
+        run: |
+          nix build ./release
+          printed="$(./result/bin/{{name}} --version)"
+          test "$printed" = "{{name}} $VERSION" || { echo "the flake at v$VERSION prints $printed"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  stable:
+    needs: [stable-build]
+    if: ${{ !cancelled() && needs.stable-build.result == 'success' && needs.stable-build.outputs.version != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: stable
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+      - name: Stable is still below the release that built
+        id: stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/stable-version.sh >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: steps.stable.outputs.version == needs.stable-build.outputs.version
+        with:
+          ref: v${{ needs.stable-build.outputs.version }}
+          path: release
+      - name: Point stable at the tag
+        if: steps.stable.outputs.version == needs.stable-build.outputs.version
+        run: git -C release push origin "+HEAD:refs/heads/stable"
