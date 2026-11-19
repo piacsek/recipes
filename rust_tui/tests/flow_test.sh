@@ -1737,19 +1737,31 @@ test_an_empty_repository_gets_main_pushed() {
   assert_contains "$(remote_git show main:README.md)" "# acme-tool"
 }
 
-test_a_repository_holding_the_old_bootstrap_gets_phase_0() {
+test_a_repository_holding_the_old_bootstrap_and_its_phase_0_is_accepted_without_a_render() {
   sandbox
   old_bootstrap_on_main
+  phase_0_already_opened
+  main_before="$(remote_git rev-parse main)"
+  branch_before="$(remote_git rev-parse phase-0-foundations)"
   flow >/dev/null
-  assert_eq "$(remote_git cat-file -t "$(phase_0_commit):CHANGELOG.md")" "blob"
+  assert_eq "$(remote_git rev-parse main)" "$main_before"
+  assert_eq "$(remote_git rev-parse phase-0-foundations)" "$branch_before"
+  refute_exists "$PROJECT/.claude/worktrees/phase-0-foundations"
 }
 
-test_a_repository_holding_the_old_bootstrap_keeps_main() {
+test_a_repository_holding_the_old_bootstrap_without_phase_0_is_refused_before_anything_changes() {
   sandbox
   old_bootstrap_on_main
-  before="$(remote_git rev-parse main)"
-  flow >/dev/null
-  assert_eq "$(remote_git rev-parse main)" "$before"
+  : >"$FAKE_LOG"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "main of acme/acme-tool lacks the CHANGELOG.md the current bootstrap writes"
+  assert_eq "$(mutating_calls)" ""
+  refute_exists "$PROJECT"
+  refute_exists "$HOME/.config/acme-tool-dev"
 }
 
 test_a_foreign_untracked_file_stops_the_metrics_record() {
@@ -2111,7 +2123,12 @@ old_bootstrap_on_main() {
   git -C "$PROJECT" commit -q --amend -m "Bootstrap"
   existing_repository
   git -C "$PROJECT" push -q origin main
-  rm -rf "$PROJECT"
+  rm -rf "$PROJECT" "$HOME/.config/acme-tool-dev"
+}
+
+phase_0_already_opened() {
+  remote_commit phase-0-foundations notes.txt
+  jq -n '[{number: 1, headRefName: "phase-0-foundations", title: "Phase 0", body: "Phase 0", state: "OPEN", isDraft: true, createdAt: "2026-11-18T10:05:00Z", url: "https://github.com/acme/acme-tool/pull/1"}]' >"$FAKE_STATE/prs.json"
 }
 
 cut_the_metrics_commit() {

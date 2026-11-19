@@ -494,6 +494,8 @@ check_ownership() {
   for rel in README.md LICENSE .github/workflows/ci.yml; do
     main_has "$rel" || die "$repo holds part of this recipe's bootstrap on main, without $rel; pick another name"
   done
+  main_has CHANGELOG.md || remote_branch || has_pr ||
+    die "main of $repo lacks the CHANGELOG.md the current bootstrap writes, and phase 0 is not on it yet; pick another name"
 }
 
 load_ruleset() {
@@ -780,7 +782,7 @@ fresh_render() {
   local files
   files="$(git -C "$wt" ls-tree -r --name-only origin/main | LC_ALL=C sort | tr '\n' ' ')"
   case "$files" in
-    ".github/workflows/ci.yml CHANGELOG.md LICENSE README.md " | ".github/workflows/ci.yml LICENSE README.md ") ;;
+    ".github/workflows/ci.yml CHANGELOG.md LICENSE README.md ") ;;
     *) die "main holds more than the bootstrap commit ($files), so the phase 0 plan's facts would be false" ;;
   esac
   load_ruleset

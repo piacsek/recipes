@@ -88,9 +88,11 @@ nothing to do. Rerunning after a failure finishes the job; rerunning on a finish
 nothing and exits 0.
 
 - An existing `<owner>/<name>` is taken over only when this recipe started it: it has no branch,
-  or its default branch is `main` and `main` holds exactly the bootstrap (with or without
-  `CHANGELOG.md`) or the scaffold (`scripts/ship.sh` and `plans/phase-0-foundations.md`). Anything
-  else stops the run in the preflight, before the plan, with one line saying what was found.
+  or its default branch is `main` and `main` holds exactly the bootstrap or the scaffold
+  (`scripts/ship.sh` and `plans/phase-0-foundations.md`). The older bootstrap without
+  `CHANGELOG.md` is accepted only once phase 0 exists for it (its branch on GitHub or a pull
+  request), so every phase 0 step is skipped. Anything else stops the run in the preflight, before
+  the plan, with one line saying what was found.
 - An existing `~/projects/<name>` is fine when it is a clone of `<owner>/<name>` (origin
   `git@github.com:<owner>/<name>.git` or its https form). Anything else stops the run before any
   side effect.
