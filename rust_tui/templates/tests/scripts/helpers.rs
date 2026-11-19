@@ -108,7 +108,7 @@ pub fn build_in(worktree: &Path) -> PathBuf {
     binary
 }
 
-pub fn link_{{snake}}_dev(root: &Path, target: &Path) {
+pub fn link_dev_binary(root: &Path, target: &Path) {
     let bin = root.join("home/.local/bin");
     fs::create_dir_all(&bin).unwrap();
     symlink(target, bin.join("{{name}}-dev")).unwrap();

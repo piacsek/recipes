@@ -62,7 +62,7 @@ fn a_decoy_version_in_a_multi_line_string_does_not_hide_the_version_cargo_reads(
 }
 
 #[test]
-fn a_lock_with_two_{{snake}}_entries_is_refused() {
+fn a_lock_with_two_package_entries_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let work = main_with_a_release(dir.path());
     committed(
@@ -233,7 +233,7 @@ fn a_manifest_with_crlf_line_endings_is_refused_since_the_release_cannot_set_it(
 }
 
 #[test]
-fn a_lock_without_a_{{snake}}_entry_is_refused_as_unread() {
+fn a_lock_without_a_package_entry_is_refused_as_unread() {
     let output =
         checked_lock("version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n");
 

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::helpers::{fragment, git, link_script, repository, stderr};
-use crate::release_commit::{release_commit, today, CARGO_LOCK, CARGO_TOML, {{upper}}_ENTRY};
+use crate::release_commit::{release_commit, today, CARGO_LOCK, CARGO_TOML, PACKAGE_ENTRY};
 
 #[test]
 fn the_first_release_writes_a_changelog_of_its_own_section_alone() {
@@ -35,7 +35,7 @@ fn the_first_release_sets_the_package_version() {
 }
 
 #[test]
-fn the_first_release_sets_the_version_of_the_{{snake}}_lock_entry() {
+fn the_first_release_sets_the_version_of_the_package_lock_entry() {
     let dir = tempfile::tempdir().unwrap();
     let work = first_release_sandbox(dir.path());
     fragment(&work, "topic", "kind: feat\n\n- A first key.\n");
@@ -45,7 +45,7 @@ fn the_first_release_sets_the_version_of_the_{{snake}}_lock_entry() {
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     assert_eq!(
         fs::read_to_string(work.join("Cargo.lock")).unwrap(),
-        CARGO_LOCK.replacen({{upper}}_ENTRY, &{{upper}}_ENTRY.replace("0.3.1", "0.1.0"), 1)
+        CARGO_LOCK.replacen(PACKAGE_ENTRY, &PACKAGE_ENTRY.replace("0.3.1", "0.1.0"), 1)
     );
 }
 
@@ -115,7 +115,7 @@ fn first_release_sandbox(root: &Path) -> PathBuf {
     .unwrap();
     fs::write(
         work.join("Cargo.lock"),
-        CARGO_LOCK.replacen({{upper}}_ENTRY, &{{upper}}_ENTRY.replace("0.3.1", "0.0.0"), 1),
+        CARGO_LOCK.replacen(PACKAGE_ENTRY, &PACKAGE_ENTRY.replace("0.3.1", "0.0.0"), 1),
     )
     .unwrap();
     git(&work, &["add", "-A"]);

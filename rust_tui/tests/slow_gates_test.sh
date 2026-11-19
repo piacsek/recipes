@@ -17,6 +17,10 @@ test_a_rendered_project_passes_its_own_gates() {
   assert_eq "$(git -C "$project" status --porcelain)" ""
 }
 
+test_a_name_that_matches_a_cli_test_still_compiles_the_tests() {
+  assert_status "$(cargo_check_tests help-exits-zero)" 0
+}
+
 bootstrap_like_tui_repo() {
   git init -q --bare "$SCRATCH/origin.git"
   git init -q "$1"
@@ -38,7 +42,18 @@ render_into() {
   TUI_REPO_OWNER=acme \
     TUI_REPO_TAP=acme/homebrew-tap \
     TUI_REPO_AUTHOR="Jane Q. O'Neil & Co" \
-    "$TUI_REPO" acme-tool \
+    "$TUI_REPO" "${2:-acme-tool}" \
     --description "Docks & ships / tides | crews, (fast)! 100% sure? it's 'fine' #1 C++ {ok}" \
     --render-only "$1" </dev/null >/dev/null
+}
+
+cargo_check_tests() {
+  local out="$SCRATCH/check-$1" status
+  render_into "$out" "$1"
+  set +e
+  (cd "$out" && cargo check --tests --locked) >"$out.log" 2>&1
+  status=$?
+  set -e
+  [ "$status" = 0 ] || cat "$out.log" >&2
+  echo "$status"
 }

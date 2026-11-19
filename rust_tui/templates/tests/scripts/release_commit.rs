@@ -46,7 +46,7 @@ fn a_dependency_under_an_indented_table_header_keeps_its_version() {
 }
 
 #[test]
-fn only_the_{{snake}}_entry_of_cargo_lock_becomes_the_release() {
+fn only_the_package_entry_of_cargo_lock_becomes_the_release() {
     let dir = tempfile::tempdir().unwrap();
     let work = sandbox(dir.path());
     fragment(&work, "topic", "kind: fix\n\n- Fixed the queue.\n");
@@ -423,7 +423,7 @@ fn a_missed_package_version_is_refused_when_an_indented_table_reads_the_release(
 }
 
 #[test]
-fn a_{{snake}}_lock_entry_the_rewrite_misses_is_refused_by_file() {
+fn a_package_lock_entry_the_rewrite_misses_is_refused_by_file() {
     let dir = tempfile::tempdir().unwrap();
     let work = sandbox(dir.path());
     committed(
@@ -578,4 +578,4 @@ pub const CARGO_LOCK: &str = "version = 4\n\n[[package]]\nname = \"chrono\"\nver
 
 const CHANGELOG: &str = "# Changelog\n\n## v0.3.1 (2026-11-02)\n- Fixed the builds.\n\n## v0.3.0 (2026-11-01)\n- A first key.\n";
 
-pub const {{upper}}_ENTRY: &str = "name = \"{{name}}\"\nversion = \"0.3.1\"";
+pub const PACKAGE_ENTRY: &str = "name = \"{{name}}\"\nversion = \"0.3.1\"";

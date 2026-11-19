@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 use crate::helpers::{calls, isolated, link_script, stdout, which};
 
 #[test]
-fn the_formula_is_the_{{snake}}_class_with_its_one_line_description() {
+fn the_formula_is_the_package_class_with_its_one_line_description() {
     let dir = tempfile::tempdir().unwrap();
     sandbox(dir.path());
 
@@ -73,7 +73,7 @@ fn the_hashes_are_fetched_from_the_release_of_that_version() {
 }
 
 #[test]
-fn the_formula_installs_the_{{snake}}_binary() {
+fn the_formula_installs_the_package_binary() {
     let dir = tempfile::tempdir().unwrap();
     sandbox(dir.path());
 

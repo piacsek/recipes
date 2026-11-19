@@ -45,9 +45,49 @@ test_render_leaves_no_harbour_in_file_names() {
   assert_eq "$(find "$OUT" -iname '*harbour*')" ""
 }
 
-test_render_for_another_owner_leaves_no_piacsek() {
+test_render_for_another_owner_names_piacsek_only_in_agents_md() {
   render acme-tool
-  assert_eq "$(grep -rli piacsek "$OUT" || true)" ""
+  assert_eq "$(grep -rli piacsek "$OUT" | sed "s|^$OUT/||")" "AGENTS.md"
+}
+
+test_render_for_another_owner_names_piacsek_only_in_the_pr_review_link() {
+  render acme-tool
+  assert_eq "$(grep -rhoi 'piacsek[^ ]*' "$OUT")" "piacsek/dotfiles/blob/main/.claude/skills/pr-review/SKILL.md)"
+}
+
+test_render_links_the_pr_review_skill_in_the_recipe_authors_dotfiles() {
+  render acme-tool
+  assert_contains "$(cat "$OUT/AGENTS.md")" "(https://github.com/piacsek/dotfiles/blob/main/.claude/skills/pr-review/SKILL.md)"
+}
+
+test_render_says_in_agents_md_that_the_binary_prints_its_changelog() {
+  render acme-tool
+  assert_contains "$(flat "$OUT/AGENTS.md")" "Until then the binary only answers \`--help\`, \`--version\` and \`changelog\`."
+}
+
+test_render_says_in_the_plan_summary_that_the_binary_prints_its_changelog() {
+  render acme-tool
+  assert_contains "$(flat "$OUT/plans/phase-0-foundations.md")" "The binary itself only answers \`--help\`, \`--version\` and \`changelog\`;"
+}
+
+test_render_says_in_the_plan_facts_that_the_binary_prints_its_changelog() {
+  render acme-tool
+  assert_contains "$(flat "$OUT/plans/phase-0-foundations.md")" "The binary answers \`--help\`, \`--version\` and \`changelog\` and nothing else."
+}
+
+test_render_says_in_the_fragment_that_the_binary_prints_its_changelog() {
+  render acme-tool
+  assert_contains "$(flat "$OUT/changes/phase-0-foundations.md")" "answers \`--version\`, \`--help\` and \`changelog\`."
+}
+
+test_render_tells_the_review_skill_which_labels_tui_repo_creates() {
+  render acme-tool
+  assert_contains "$(flat "$OUT/.claude/skills/adversarial-review/SKILL.md")" "Besides GitHub's default labels, \`tui_repo\` creates \`adversarial-review-finding\`, \`development-cycle-improvement\` and \`Type: Maintenance\` with the repository."
+}
+
+test_render_creates_the_formula_directory_before_writing_the_formula() {
+  render acme-tool
+  assert_contains "$(cat "$OUT/.github/workflows/release.yml")" $'mkdir -p tap/Formula\n          scripts/homebrew-formula.sh "$VERSION" > tap/Formula/acme-tool.rb'
 }
 
 test_render_names_the_owner_repository() {
@@ -80,9 +120,31 @@ test_render_names_the_denylist_variable_in_upper_snake_case() {
   assert_contains "$(cat "$OUT/scripts/scrub-check.sh")" 'list="${ACME_TOOL_DENYLIST:-$HOME/.config/acme-tool-dev/denylist}"'
 }
 
-test_render_names_rust_helpers_in_snake_case() {
+test_render_gives_the_cli_test_helper_a_fixed_name() {
   render acme-tool
-  assert_contains "$(cat "$OUT/tests/cli.rs")" "fn acme_tool(args: &[&str]) -> Output {"
+  assert_contains "$(cat "$OUT/tests/cli.rs")" "fn launch(args: &[&str]) -> Output {"
+}
+
+test_render_names_no_rust_item_after_the_project() {
+  render acme-tool
+  assert_eq "$(grep -rlE '(fn|const|static|struct|enum|mod|type) [A-Za-z_]*(acme_tool|ACME_TOOL)' "$OUT" || true)" ""
+}
+
+test_a_name_shared_with_a_test_helper_is_accepted() {
+  set +e
+  render stdout
+  status=$?
+  set -e
+  assert_status "$status" 0
+}
+
+test_a_dev_dependency_name_is_refused() {
+  set +e
+  output="$(render_env tempfile "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "reserved"
 }
 
 test_render_runs_the_binary_by_its_name() {
@@ -246,4 +308,8 @@ render_env() {
 
 lock_order() {
   awk '/^name = / { print $3 }' "$1" | LC_ALL=C sort -c 2>/dev/null && echo sorted || echo unsorted
+}
+
+flat() {
+  tr -s '\n ' '  ' <"$1"
 }

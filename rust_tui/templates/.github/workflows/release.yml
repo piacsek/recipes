@@ -161,6 +161,7 @@ jobs:
         env:
           VERSION: ${{ steps.formula.outputs.version }}
         run: |
+          mkdir -p tap/Formula
           scripts/homebrew-formula.sh "$VERSION" > tap/Formula/{{name}}.rb
           cd tap
           git config user.name "github-actions[bot]"

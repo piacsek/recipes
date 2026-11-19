@@ -126,7 +126,7 @@ fn a_manifest_cargo_cannot_load_is_refused_with_cargos_first_error_line() {
 }
 
 #[test]
-fn a_virtual_manifest_is_refused_since_{{snake}}_must_be_the_root_package() {
+fn a_virtual_manifest_is_refused_since_package_must_be_the_root_package() {
     let dir = tempfile::tempdir().unwrap();
     let work = main_with_a_release(dir.path());
     committed(

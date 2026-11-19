@@ -3,14 +3,14 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use crate::helpers::{
-    another_build, build_in, git, isolated, link_{{snake}}_dev, repository, stderr, stdout, which,
+    another_build, build_in, git, isolated, link_dev_binary, repository, stderr, stdout, which,
 };
 
 #[test]
 fn a_branch_that_feeds_nothing_into_the_binary_can_skip_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::write(work.join("README.md"), "changed\n").unwrap();
     fs::write(work.join("tests/new.rs"), "").unwrap();
     git(&work, &["commit", "-qam", "docs"]);
@@ -29,7 +29,7 @@ fn a_branch_that_feeds_nothing_into_the_binary_can_skip_the_dev_install() {
 fn an_agents_file_next_to_the_sources_can_skip_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::create_dir_all(work.join("src/app")).unwrap();
     fs::write(work.join("src/app/AGENTS.md"), "agents\n").unwrap();
 
@@ -46,7 +46,7 @@ fn an_agents_file_next_to_the_sources_can_skip_the_dev_install() {
 fn a_fragment_under_changes_can_skip_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::create_dir_all(work.join("changes")).unwrap();
     fs::write(work.join("changes/topic.md"), "kind: fix\n\n- Fixed.\n").unwrap();
 
@@ -63,7 +63,7 @@ fn a_fragment_under_changes_can_skip_the_dev_install() {
 fn an_untracked_source_file_needs_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::write(work.join("src/new.rs"), "").unwrap();
 
     let output = skippable(dir.path());
@@ -76,7 +76,7 @@ fn an_untracked_source_file_needs_the_dev_install() {
 fn the_changelog_is_bundled_so_editing_it_needs_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::write(work.join("CHANGELOG.md"), "changed\n").unwrap();
 
     let output = skippable(dir.path());
@@ -89,7 +89,7 @@ fn the_changelog_is_bundled_so_editing_it_needs_the_dev_install() {
 fn a_path_nobody_listed_needs_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::write(work.join("build.rs"), "").unwrap();
 
     let output = skippable(dir.path());
@@ -102,7 +102,7 @@ fn a_path_nobody_listed_needs_the_dev_install() {
 fn a_source_change_committed_earlier_on_the_branch_needs_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::write(work.join("src/main.rs"), "fn main() { }\n").unwrap();
     git(&work, &["commit", "-qam", "source"]);
     fs::write(work.join("README.md"), "changed\n").unwrap();
@@ -114,7 +114,7 @@ fn a_source_change_committed_earlier_on_the_branch_needs_the_dev_install() {
 }
 
 #[test]
-fn a_missing_{{snake}}_dev_needs_the_dev_install() {
+fn a_missing_package_dev_needs_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     repository(dir.path());
 
@@ -125,10 +125,10 @@ fn a_missing_{{snake}}_dev_needs_the_dev_install() {
 }
 
 #[test]
-fn a_dangling_{{snake}}_dev_needs_the_dev_install() {
+fn a_dangling_package_dev_needs_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &dir.path().join("removed/{{name}}"));
+    link_dev_binary(dir.path(), &dir.path().join("removed/{{name}}"));
 
     let output = skippable(dir.path());
 
@@ -137,10 +137,10 @@ fn a_dangling_{{snake}}_dev_needs_the_dev_install() {
 }
 
 #[test]
-fn a_{{snake}}_dev_built_here_always_goes_through_the_dev_install() {
+fn a_package_dev_built_here_always_goes_through_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &build_in(&work));
+    link_dev_binary(dir.path(), &build_in(&work));
 
     let output = skippable(dir.path());
 
@@ -152,7 +152,7 @@ fn a_{{snake}}_dev_built_here_always_goes_through_the_dev_install() {
 fn a_branch_with_no_known_main_needs_the_dev_install() {
     let dir = tempfile::tempdir().unwrap();
     let work = repository(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     git(&work, &["update-ref", "-d", "refs/remotes/origin/main"]);
 
     let output = skippable(dir.path());

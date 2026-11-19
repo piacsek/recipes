@@ -6,7 +6,7 @@ factual; verify against the code before treating anything here as live state.
 ## What this is
 
 {{name}}: {{description}}. What it does is not defined yet: Phase 1 defines the product.
-Until then the binary only answers `--help` and `--version`. Phase 0 scaffolded the
+Until then the binary only answers `--help`, `--version` and `changelog`. Phase 0 scaffolded the
 guidelines, guardrails, CI and the automatic release from the `rust_tui` recipe, which descends
 from conveyor, an earlier project by the recipe's author; the conveyor history below is that
 project's. `PLAN.md` is the index of phases and the backlog; each phase's plan, outcome and
@@ -283,7 +283,7 @@ nearest the code the guideline is about.
   who calls whom. For a reorganization, a before and an after. Keep each diagram small enough
   to read without scrolling, and leave it out when the change has no structure to draw.
 - **Review before ready.** Marking a PR ready for review means running the
-  [`/pr-review`](https://github.com/{{owner}}/dotfiles/blob/main/.claude/skills/pr-review/SKILL.md)
+  [`/pr-review`](https://github.com/piacsek/dotfiles/blob/main/.claude/skills/pr-review/SKILL.md)
   skill on the PR first, and acting on what it finds. It runs a Claude and a Codex reviewer
   over the diff and merges their findings; run it from the main session, because the skill
   launches Codex there. Give both reviewers the intent of the change, point them at this

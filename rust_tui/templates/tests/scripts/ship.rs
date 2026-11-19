@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::helpers::{
-    another_build, calls, git, isolated, link_{{snake}}_dev, link_script, recorder, repository,
+    another_build, calls, git, isolated, link_dev_binary, link_script, recorder, repository,
     stderr, stdout,
 };
 
@@ -12,7 +12,7 @@ use crate::helpers::{
 fn ship_skips_the_dev_install_and_says_why() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::write(work.join("README.md"), "changed\n").unwrap();
 
     let output = ship(dir.path(), "docs: readme");
@@ -36,7 +36,7 @@ fn ship_skips_the_dev_install_and_says_why() {
 fn ship_runs_the_dev_install_when_the_commit_feeds_the_binary() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     fs::write(work.join("src/main.rs"), "fn main() { }\n").unwrap();
 
     let output = ship(dir.path(), "fix: main");
@@ -59,7 +59,7 @@ fn ship_runs_the_dev_install_when_the_commit_feeds_the_binary() {
 fn the_first_push_opens_the_draft_with_the_commit_subject_and_the_template() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     template(&work);
 
     let output = first_ship(dir.path(), "docs(readme): say what it does");
@@ -84,7 +84,7 @@ fn the_first_push_opens_the_draft_with_the_commit_subject_and_the_template() {
 fn the_title_is_the_first_line_of_a_longer_message() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     template(&work);
 
     let output = first_ship(dir.path(), "docs: readme\n\nA body\nof two lines");
@@ -104,7 +104,7 @@ fn the_title_is_the_first_line_of_a_longer_message() {
 fn a_missing_template_still_opens_the_draft_with_an_empty_body() {
     let dir = tempfile::tempdir().unwrap();
     ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
 
     let output = first_ship(dir.path(), "docs: readme");
 
@@ -123,7 +123,7 @@ fn a_missing_template_still_opens_the_draft_with_an_empty_body() {
 fn a_branch_that_has_a_pull_request_opens_no_other() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     template(&work);
 
     let output = ship(dir.path(), "docs: readme");
@@ -145,7 +145,7 @@ fn ship_commits_and_pushes_nothing_when_a_new_file_holds_a_listed_term() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
     scrubbing_gates(&work);
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     fs::write(work.join("notes.md"), "notes about zz-secret-term\n").unwrap();
 
@@ -164,7 +164,7 @@ fn ship_commits_and_pushes_nothing_when_a_new_file_holds_a_listed_term() {
 fn ship_commits_and_pushes_nothing_when_what_it_staged_holds_a_listed_term_the_gates_never_saw() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     fs::write(work.join("notes.md"), "notes about zz-secret-term\n").unwrap();
 
@@ -183,7 +183,7 @@ fn ship_commits_and_pushes_nothing_when_what_it_staged_holds_a_listed_term_the_g
 fn ship_commits_but_pushes_nothing_when_its_message_holds_a_listed_term() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     fs::write(work.join("README.md"), "changed\n").unwrap();
 
@@ -210,7 +210,7 @@ fn ship_commits_but_pushes_nothing_when_its_message_holds_a_listed_term() {
 fn after_a_refused_message_a_soft_reset_and_a_clean_message_ship() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     fs::write(work.join("README.md"), "changed\n").unwrap();
     first_ship(dir.path(), "fix: port the zz-secret-term workaround");
@@ -226,7 +226,7 @@ fn after_a_refused_message_a_soft_reset_and_a_clean_message_ship() {
 fn after_a_refused_branch_name_a_rename_ships() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     git(&work, &["checkout", "-qb", "zz-secret-term-fix"]);
     fs::write(work.join("README.md"), "changed\n").unwrap();
@@ -253,7 +253,7 @@ fn after_a_refused_branch_name_a_rename_ships() {
 fn after_a_refused_merge_message_an_amended_merge_ships() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     merging_main(&work);
     let refused = first_ship(dir.path(), "Merge the zz-secret-term fix");
@@ -275,7 +275,7 @@ fn after_a_refused_merge_message_an_amended_merge_ships() {
 fn ship_pushes_nothing_from_a_branch_named_after_a_listed_term() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     git(&work, &["checkout", "-qb", "zz-secret-term-fix"]);
     fs::write(work.join("README.md"), "changed\n").unwrap();
@@ -291,7 +291,7 @@ fn ship_pushes_nothing_when_an_earlier_unpushed_commit_added_a_listed_term_the_t
  {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     fs::write(work.join("README.md"), "about zz-secret-term\n").unwrap();
     git(&work, &["commit", "-qam", "docs: readme"]);
@@ -307,7 +307,7 @@ fn ship_pushes_nothing_when_an_earlier_unpushed_commit_added_a_listed_term_the_t
 fn a_clean_ship_with_a_denylist_pushes_and_opens_the_draft() {
     let dir = tempfile::tempdir().unwrap();
     let work = ship_sandbox(dir.path());
-    link_{{snake}}_dev(dir.path(), &another_build(dir.path()));
+    link_dev_binary(dir.path(), &another_build(dir.path()));
     denylist(dir.path(), "zz-secret-term\n");
     fs::write(work.join("README.md"), "changed\n").unwrap();
 

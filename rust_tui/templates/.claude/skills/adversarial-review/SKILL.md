@@ -66,10 +66,9 @@ In chat, not a file. Offer a shareable page in one line. Sections, most severe f
 - **Labels.**
   - Every issue gets `adversarial-review-finding`, plus the existing labels that fit
     (`gh label list`).
-  - The labels in use are `bug`, `enhancement`, `documentation`, `good first issue`,
-    `help wanted`, `development-cycle-improvement` and `Type: Maintenance`.
-  - `tui_repo` creates `adversarial-review-finding` with the repository. When it is missing,
-    create it with `gh label create` first.
+  - Besides GitHub's default labels, `tui_repo` creates `adversarial-review-finding`,
+    `development-cycle-improvement` and `Type: Maintenance` with the repository. When
+    `adversarial-review-finding` is missing, create it with `gh label create` first.
 - **Body**, following the issue forms (`.github/ISSUE_TEMPLATE/`):
   - `## What happens` for a bug, or `## What you are trying to do` / `## What gets in the way` for
     an enhancement: the repro, pinned to the commit sha.
