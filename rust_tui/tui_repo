@@ -64,7 +64,7 @@ HOME="$(absolute "$HOME")"
 shared_denylist="$(absolute "${TUI_REPO_SHARED_DENYLIST:-$HOME/.config/conveyor-dev/denylist}")"
 projects_dir="$(absolute "${PROJECTS_DIR:-$HOME/projects}")"
 render_only="$(absolute "$render_only")"
-tmp_root="$(absolute "${TMPDIR:-/tmp}")"
+[ -z "${TMPDIR:-}" ] || TMPDIR="$(absolute "$TMPDIR")"
 [ -z "${CHROME:-}" ] || CHROME="$(absolute "$CHROME")"
 
 ask() {
@@ -244,7 +244,7 @@ dir="$projects_dir/$name"
 branch=phase-0-foundations
 wt="$dir/.claude/worktrees/$branch"
 remote_url="git@github.com:$repo.git"
-work="$(mktemp -d "$tmp_root/tui_repo.XXXXXX")"
+work="$(mktemp -d "${TMPDIR:-/tmp}/tui_repo.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 link="$HOME/.config/$name-dev/denylist"
 title="Set up $name with its checks, guidelines and automatic releases"
