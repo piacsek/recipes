@@ -39,6 +39,7 @@ while [ $# -gt 0 ]; do
     --color | -c) color="$2"; shift 2 ;;
     --description | -d) description="$2"; shift 2 ;;
     --silent) silent=1; shift ;;
+    --paginate) shift ;;
     --public | --draft) shift ;;
     *) positional+=("$1"); shift ;;
   esac
@@ -122,6 +123,13 @@ api() {
   esac
   repo="$(printf '%s' "$path" | cut -d/ -f2-3)"
   route="${path#repos/"$repo"}"
+  case "$method $repo $route" in
+    "GET "*/homebrew-*" ")
+      [ -z "${FAKE_TAP_MISSING:-}" ] || not_found
+      jq -n --arg name "$repo" '{full_name: $name}' | emit
+      return
+      ;;
+  esac
   case "$method $route" in
     "GET ")
       require_repo
@@ -163,6 +171,17 @@ api() {
       body="$(request_body)"
       json_or rulesets.json '[]' | jq --argjson id "${route#/rulesets/}" --argjson body "$body" 'map(if .id == $id then $body + {id: $id, source_type, source} else . end)' | save rulesets.json
       ;;
+    "GET /branches")
+      require_repo
+      git --git-dir "$(remote "$repo")" for-each-ref --format='%(refname:short)' refs/heads | jq -R '{name: .}' | jq -s . | emit
+      ;;
+    "GET /git/trees/"*)
+      require_repo
+      local ref="${route#/git/trees/}"
+      ref="${ref%%\?*}"
+      git --git-dir "$(remote "$repo")" rev-parse -q --verify "$ref^{tree}" >/dev/null || not_found
+      git --git-dir "$(remote "$repo")" ls-tree -r "$ref" | jq -R 'capture("^[0-9]+ (?<type>[a-z]+) (?<sha>[0-9a-f]+)\t(?<path>.*)$")' | jq -s '{tree: ., truncated: false}' | emit
+      ;;
     "GET /branches/"*)
       require_repo
       local name="${route#/branches/}"
@@ -174,7 +193,7 @@ api() {
       local file="${route#/contents/}" ref=main
       case "$file" in *"?ref="*) ref="${file#*\?ref=}"; file="${file%%\?*}" ;; esac
       git --git-dir "$(remote "$repo")" cat-file -e "$ref:$file" 2>/dev/null || not_found
-      jq -n --arg path "$file" '{path: $path}' | emit
+      git --git-dir "$(remote "$repo")" show "$ref:$file" | jq -Rs --arg path "$file" '{path: $path, content: @base64}' | emit
       ;;
     *) unknown ;;
   esac
@@ -201,7 +220,7 @@ done
 HOOK
   chmod +x "$(remote "$repo")/hooks/pre-receive"
   jq -n --arg name "$repo" --arg description "$description" '{
-    full_name: $name, description: $description,
+    full_name: $name, description: $description, default_branch: "main",
     allow_squash_merge: true, allow_merge_commit: true, allow_rebase_merge: true,
     allow_auto_merge: false, allow_update_branch: false, delete_branch_on_merge: false,
     squash_merge_commit_title: "COMMIT_OR_PR_TITLE", squash_merge_commit_message: "COMMIT_MESSAGES",

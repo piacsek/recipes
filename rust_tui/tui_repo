@@ -340,6 +340,9 @@ known_scaffold=""
 known_branch=""
 known_main=""
 known_ruleset=""
+known_empty=""
+branch_names=""
+main_foreign=""
 probe_out=""
 missing=""
 missing_label_lines=""
@@ -351,6 +354,7 @@ forget() {
   known_branch=""
   known_main=""
   known_ruleset=""
+  known_empty=""
 }
 
 lookup() {
@@ -421,6 +425,67 @@ remote_main() {
     if repo_exists && remote_has main; then known_main=yes; fi
   fi
   [ "$known_main" = yes ]
+}
+
+remote_empty() {
+  if [ -z "$known_empty" ]; then
+    known_empty=yes
+    if repo_exists; then
+      query "the branches of $repo" gh api --paginate "repos/$repo/branches" --jq '.[].name'
+      branch_names="$probe_out"
+      [ -z "$branch_names" ] || known_empty=no
+    fi
+  fi
+  [ "$known_empty" = yes ]
+}
+
+joined() {
+  awk 'NR > 1 { printf ", " } { printf "%s", $0 }'
+}
+
+license_on_main_ours() {
+  query "the LICENSE on main of $repo" gh api "repos/$repo/contents/LICENSE?ref=main" --jq .content </dev/null
+  printf '%s' "$probe_out" | perl -MMIME::Base64 -0777 -ne 'print decode_base64($_)' | sed 's/^Copyright (c) [0-9]\{4\} .*$/Copyright/' >"$work/license-main"
+  sed 's/^Copyright (c) {{year}} {{author}}$/Copyright/' "$templates/LICENSE" | cmp -s - "$work/license-main"
+}
+
+foreign_on_main() {
+  local sha rel n=0
+  main_foreign=""
+  rm -rf "$work/expected"
+  mkdir "$work/expected"
+  write_bootstrap "$work/expected"
+  while read -r sha rel; do
+    [ -n "$rel" ] || continue
+    case "$rel" in
+      LICENSE) if license_on_main_ours; then continue; fi ;;
+      README.md | CHANGELOG.md | .github/workflows/ci.yml) [ "$sha" != "$(git hash-object "$work/expected/$rel")" ] || continue ;;
+    esac
+    n=$((n + 1))
+    [ "$n" -gt 5 ] || main_foreign="${main_foreign:+$main_foreign, }$rel"
+  done <"$work/main-tree"
+  [ "$n" -le 5 ] || main_foreign="$main_foreign and $((n - 5)) more"
+}
+
+main_has() {
+  awk -v want="$1" '{ sub(/^[^ ]* /, "") } $0 == want { found = 1 } END { exit !found }' "$work/main-tree"
+}
+
+check_ownership() {
+  local rel
+  repo_exists || return 0
+  ! remote_empty || return 0
+  query "the default branch of $repo" gh api "repos/$repo" --jq .default_branch
+  [ "$probe_out" = main ] || die "$repo has $probe_out as its default branch, not main, so this recipe did not start it; pick another name"
+  printf '%s\n' "$branch_names" | grep -qxF main || die "$repo has branches ($(printf '%s\n' "$branch_names" | joined)) but no main, so this recipe did not start it; pick another name"
+  query "what main of $repo holds" gh api "repos/$repo/git/trees/main?recursive=1" --jq '.tree[] | select(.type == "blob") | "\(.sha) \(.path)"'
+  printf '%s\n' "$probe_out" >"$work/main-tree"
+  if main_has scripts/ship.sh && main_has plans/phase-0-foundations.md; then return 0; fi
+  foreign_on_main
+  [ -z "$main_foreign" ] || die "$repo already holds $main_foreign on main, which is neither this recipe's bootstrap nor its scaffold; pick another name"
+  for rel in README.md LICENSE .github/workflows/ci.yml; do
+    main_has "$rel" || die "$repo holds part of this recipe's bootstrap on main, without $rel; pick another name"
+  done
 }
 
 load_ruleset() {
@@ -542,7 +607,8 @@ do_repo() {
 
 plan_push() {
   plan=""
-  remote_main || plan="push main to $repo"
+  if repo_exists && ! remote_empty; then return 0; fi
+  plan="push main to $repo"
 }
 
 do_push() {
@@ -693,8 +759,10 @@ render_foreign=""
 fresh_render() {
   local files
   files="$(git -C "$wt" ls-tree -r --name-only origin/main | LC_ALL=C sort | tr '\n' ' ')"
-  [ "$files" = ".github/workflows/ci.yml CHANGELOG.md LICENSE README.md " ] ||
-    die "main holds more than the bootstrap commit ($files), so the phase 0 plan's facts would be false"
+  case "$files" in
+    ".github/workflows/ci.yml CHANGELOG.md LICENSE README.md " | ".github/workflows/ci.yml LICENSE README.md ") ;;
+    *) die "main holds more than the bootstrap commit ($files), so the phase 0 plan's facts would be false" ;;
+  esac
   load_ruleset
   ruleset_id="$known_ruleset"
   main_sha="$(git -C "$wt" rev-parse --short origin/main)"
@@ -731,9 +799,16 @@ compare_render() {
   done <"$work/rendered"
 }
 
+worktree_on_branch() {
+  local head
+  head="$(git -C "$wt" symbolic-ref -q --short HEAD || true)"
+  [ "$head" = "$branch" ] || die "the phase 0 worktree $wt has ${head:-a detached HEAD} checked out, not $branch; check out $branch there and rerun"
+}
+
 plan_render() {
   plan=""
   phase0_active || return 0
+  [ ! -d "$wt" ] || worktree_on_branch
   [ "$(ahead)" = 0 ] || return 0
   if [ -d "$wt" ]; then
     fresh_render
@@ -776,13 +851,23 @@ do_screenshot() {
   help_png_ok docs/help.png || die "scripts/screenshots.sh wrote no PNG to docs/help.png"
 }
 
+ship_guard() {
+  local changes
+  worktree_on_branch
+  [ "$(ahead)" = 1 ] || return 0
+  changes="$(git -C "$wt" status --porcelain --untracked-files=all | cut -c4- | tr '\n' ' ')"
+  [ -z "$changes" ] || die "the phase 0 worktree holds changes besides the phase 0 commit: ${changes% }; move them away and rerun"
+}
+
 plan_ship() {
   plan=""
   phase0_active || return 0
+  [ ! -d "$wt" ] || ship_guard
   plan="ship the branch and open the draft pull request \"$title\""
 }
 
 do_ship() {
+  ship_guard
   cd "$wt"
   if [ "$(ahead)" = 1 ] && [ -z "$(git rev-list HEAD --not --remotes)" ]; then
     gh pr create --draft --assignee @me --title "$title" --body-file .github/pull_request_template.md >/dev/null
@@ -845,22 +930,46 @@ do_body() {
   pr_body "$sha" | gh pr edit "$(pr_field number)" --repo "$repo" --body-file - >/dev/null
 }
 
+record_metrics() {
+  local at cell metrics_start
+  at="$(pr_field createdAt)"
+  metrics_start="$(sed -n 's/^| 0 |  | \([^|]*\) |  | .*/\1/p' "$1")"
+  cell="${at#*T}"
+  [ "${metrics_start%% *}" = "${at%%T*}" ] || cell="${at%%T*} $cell"
+  RT_PR="#$(pr_field number)" RT_CELL="$cell" perl -i -pe 's/^\| 0 \|  \| ([^|]*) \|  \|/| 0 | $ENV{RT_PR} | $1 | $ENV{RT_CELL} |/' "$1"
+}
+
+record_guard() {
+  local entry rel foreign="" commits
+  worktree_on_branch
+  load_pr
+  git -C "$wt" show HEAD:plans/metrics.md >"$work/metrics.md"
+  record_metrics "$work/metrics.md"
+  git -C "$wt" status --porcelain -z --untracked-files=all >"$work/status"
+  while IFS= read -r -d '' entry; do
+    rel="${entry:3}"
+    if [ "$rel" = plans/metrics.md ] && cmp -s "$work/metrics.md" "$wt/plans/metrics.md"; then continue; fi
+    foreign="$foreign $rel"
+  done <"$work/status"
+  [ -z "$foreign" ] || die "the phase 0 worktree holds changes besides the metrics record:$foreign; move them away and rerun"
+  commits="$(git -C "$wt" log --format=%s HEAD --not --remotes | grep -vxF -- "$record_title" | joined || true)"
+  [ -z "$commits" ] || die "the phase 0 worktree holds unpushed commits besides the metrics record ($commits); move them away and rerun"
+}
+
 plan_record() {
   plan=""
-  if phase0_active || { pr_open && [ -d "$wt" ] && git -C "$wt" show "origin/$branch:plans/metrics.md" 2>/dev/null | grep -q '^| 0 |  |'; }; then
+  if phase0_active; then
+    plan="write the pull request's number and opening time into plans/metrics.md and ship it"
+  elif pr_open && [ -d "$wt" ] && git -C "$wt" show "origin/$branch:plans/metrics.md" 2>/dev/null | grep -q '^| 0 |  |'; then
+    record_guard
     plan="write the pull request's number and opening time into plans/metrics.md and ship it"
   fi
 }
 
 do_record() {
-  local at cell metrics_start
-  load_pr
-  at="$(pr_field createdAt)"
+  record_guard
   cd "$wt"
-  metrics_start="$(sed -n 's/^| 0 |  | \([^|]*\) |  | .*/\1/p' plans/metrics.md)"
-  cell="${at#*T}"
-  [ "${metrics_start%% *}" = "${at%%T*}" ] || cell="${at%%T*} $cell"
-  RT_PR="#$(pr_field number)" RT_CELL="$cell" perl -i -pe 's/^\| 0 \|  \| ([^|]*) \|  \|/| 0 | $ENV{RT_PR} | $1 | $ENV{RT_CELL} |/' plans/metrics.md
+  record_metrics plans/metrics.md
   scripts/ship.sh "$record_title"
 }
 
@@ -928,6 +1037,7 @@ for input in $hits; do
 done
 [ -z "$hits" ] || exit 1
 command -v gh >/dev/null || die "gh is missing: brew install gh"
+check_ownership
 active=""
 if phase0_active; then active=1; fi
 tools="$(missing_tools)"

@@ -833,21 +833,21 @@ test_a_failed_repository_probe_on_a_rerun_changes_nothing() {
   assert_eq "$(mutating_calls)" ""
 }
 
-test_a_failed_main_probe_on_a_rerun_pushes_nothing() {
+test_a_failed_branch_listing_on_a_rerun_pushes_nothing() {
   sandbox
-  probe_fails_on_a_rerun "branches/main"
+  probe_fails_on_a_rerun "acme-tool/branches --jq"
   assert_status "$status" 1
-  assert_contains "$output" "could not find out whether main is on acme/acme-tool"
+  assert_contains "$output" "could not find out the branches of acme/acme-tool"
   refute_contains "$output" "==> push main"
 }
 
-test_a_failed_main_probe_in_an_https_clone_pushes_nothing() {
+test_a_failed_branch_listing_in_an_https_clone_pushes_nothing() {
   sandbox
   flow >/dev/null
   git -C "$PROJECT" remote set-url origin https://github.com/acme/acme-tool.git
   : >"$FAKE_LOG"
   set +e
-  output="$(FAKE_GH_FAIL="branches/main" flow 2>&1)"
+  output="$(FAKE_GH_FAIL="acme-tool/branches --jq" flow 2>&1)"
   status=$?
   set -e
   assert_status "$status" 1
@@ -1669,6 +1669,169 @@ test_flow_starts_the_metrics_at_the_first_commit_without_a_reflog() {
   assert_contains "$(remote_git show phase-0-foundations:plans/metrics.md)" "| 0 | #1 | $(TZ=UTC remote_git log -1 --format=%cd --date=format-local:'%Y-%m-%d %H:%M:%SZ' main) |"
 }
 
+test_an_unrelated_repository_is_refused_before_anything_changes() {
+  sandbox
+  existing_repository
+  remote_commit main notes.txt
+  : >"$FAKE_LOG"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "acme/acme-tool already holds notes.txt on main"
+  assert_eq "$(mutating_calls)" ""
+  refute_exists "$PROJECT"
+  refute_exists "$HOME/.config/acme-tool-dev"
+}
+
+test_a_repository_with_another_default_branch_is_refused_before_anything_changes() {
+  sandbox
+  existing_repository
+  remote_commit trunk notes.txt
+  set_default_branch trunk
+  : >"$FAKE_LOG"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "acme/acme-tool has trunk as its default branch, not main"
+  assert_eq "$(mutating_calls)" ""
+  refute_exists "$PROJECT"
+  refute_exists "$HOME/.config/acme-tool-dev"
+}
+
+test_a_repository_with_other_branches_but_no_main_is_refused_before_anything_changes() {
+  sandbox
+  existing_repository
+  remote_commit feature notes.txt
+  : >"$FAKE_LOG"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "acme/acme-tool has branches (feature) but no main"
+  assert_eq "$(mutating_calls)" ""
+  refute_exists "$PROJECT"
+  refute_exists "$HOME/.config/acme-tool-dev"
+}
+
+test_a_repository_with_an_edited_bootstrap_readme_is_refused() {
+  sandbox
+  old_bootstrap_on_main
+  remote_commit main README.md
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "acme/acme-tool already holds README.md on main"
+}
+
+test_an_empty_repository_gets_main_pushed() {
+  sandbox
+  existing_repository
+  flow >/dev/null
+  assert_contains "$(remote_git show main:README.md)" "# acme-tool"
+}
+
+test_a_repository_holding_the_old_bootstrap_gets_phase_0() {
+  sandbox
+  old_bootstrap_on_main
+  flow >/dev/null
+  assert_eq "$(remote_git cat-file -t "$(phase_0_commit):CHANGELOG.md")" "blob"
+}
+
+test_a_repository_holding_the_old_bootstrap_keeps_main() {
+  sandbox
+  old_bootstrap_on_main
+  before="$(remote_git rev-parse main)"
+  flow >/dev/null
+  assert_eq "$(remote_git rev-parse main)" "$before"
+}
+
+test_a_foreign_untracked_file_stops_the_metrics_record() {
+  sandbox
+  cut_the_metrics_commit
+  printf 'mine\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/notes.txt"
+  before="$(remote_git rev-parse phase-0-foundations)"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "holds changes besides the metrics record: notes.txt"
+  assert_eq "$(remote_git rev-parse phase-0-foundations)" "$before"
+}
+
+test_a_foreign_edit_stops_the_metrics_record() {
+  sandbox
+  cut_the_metrics_commit
+  printf 'mine\n' >>"$PROJECT/.claude/worktrees/phase-0-foundations/README.md"
+  before="$(remote_git rev-parse phase-0-foundations)"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "holds changes besides the metrics record: README.md"
+  assert_eq "$(remote_git rev-parse phase-0-foundations)" "$before"
+}
+
+test_another_branch_in_the_worktree_stops_the_metrics_record() {
+  sandbox
+  cut_the_metrics_commit
+  git -C "$PROJECT/.claude/worktrees/phase-0-foundations" checkout -q -b other
+  before="$(remote_git for-each-ref)"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "has other checked out, not phase-0-foundations"
+  assert_eq "$(remote_git for-each-ref)" "$before"
+}
+
+test_an_unpushed_foreign_commit_stops_the_metrics_record() {
+  sandbox
+  cut_the_metrics_commit
+  git -C "$PROJECT/.claude/worktrees/phase-0-foundations" commit -q -m "Other work"
+  before="$(remote_git rev-parse phase-0-foundations)"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "holds unpushed commits besides the metrics record (Other work)"
+  assert_eq "$(remote_git rev-parse phase-0-foundations)" "$before"
+}
+
+test_a_foreign_untracked_file_stops_the_ship_of_a_rejected_phase_0_commit() {
+  sandbox
+  reject_branch_pushes
+  set +e
+  flow >/dev/null 2>&1
+  set -e
+  allow_branch_pushes
+  printf 'mine\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/notes.txt"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "holds changes besides the phase 0 commit: notes.txt"
+  refute_exists "$REMOTE/refs/heads/phase-0-foundations"
+}
+
+test_rerun_after_a_cut_metrics_commit_records_the_pull_request() {
+  sandbox
+  cut_the_metrics_commit
+  flow >/dev/null
+  assert_contains "$(remote_git show phase-0-foundations:plans/metrics.md)" $'\n| 0 | #1 | '
+}
+
 probe_fails_on_a_fresh_run() {
   set +e
   output="$(FAKE_GH_FAIL="$1" flow 2>&1)"
@@ -1833,4 +1996,44 @@ add_ruleset_by_hand() {
 
 shipped_png_signature() {
   remote_git show "$(phase_0_commit):docs/help.png" | od -An -tx1 -N8 | tr -d ' \n'
+}
+
+existing_repository() {
+  PATH="$SCRATCH/bin" FAKE_REMOTES="$SCRATCH/remotes" gh repo create acme/acme-tool --public --description "Something else" >/dev/null
+}
+
+remote_commit() {
+  local clone="$SCRATCH/clone"
+  rm -rf "$clone"
+  git clone -q "$REMOTE" "$clone" 2>/dev/null
+  git -C "$clone" checkout -q -B "$1"
+  mkdir -p "$(dirname "$clone/$2")"
+  printf 'theirs\n' >>"$clone/$2"
+  git -C "$clone" add -A
+  git -C "$clone" commit -q -m "Theirs"
+  git -C "$clone" push -q origin "HEAD:refs/heads/$1"
+}
+
+set_default_branch() {
+  jq --arg b "$1" '.default_branch = $b' "$FAKE_STATE/repo.json" >"$SCRATCH/repo.json"
+  mv "$SCRATCH/repo.json" "$FAKE_STATE/repo.json"
+}
+
+old_bootstrap_on_main() {
+  set +e
+  FAKE_GH_FAIL="repo create" flow >/dev/null 2>&1
+  set -e
+  git -C "$PROJECT" rm -q CHANGELOG.md
+  git -C "$PROJECT" commit -q --amend -m "Bootstrap"
+  existing_repository
+  git -C "$PROJECT" push -q origin main
+  rm -rf "$PROJECT"
+}
+
+cut_the_metrics_commit() {
+  stoppable
+  set +e
+  FAKE_STOP_HOW=fail FAKE_STOP_AT='^git commit -q -m Record ' flow >/dev/null 2>&1
+  set -e
+  assert_file "$SCRATCH/stop/fired"
 }
