@@ -1,4 +1,5 @@
 REAL_HOME="${REAL_HOME:-$HOME}"
+ORIGINAL_PATH="${ORIGINAL_PATH:-$PATH}"
 RECIPE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TUI_REPO="$RECIPE/tui_repo"
 FAKES="$RECIPE/tests/fakes"

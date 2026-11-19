@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'gh %s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
+state="${FAKE_STATE:?FAKE_STATE is not set}"
+mkdir -p "$state"
+
+if [ -n "${FAKE_GH_FAIL:-}" ]; then
+  case "$*" in
+    *"$FAKE_GH_FAIL"*)
+      echo "fake gh: $FAKE_GH_FAIL failed" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+jq_expr=""
+input=""
+method=GET
+title=""
+body_file=""
+head=""
+pr_state=open
+color=""
+description=""
+silent=""
+fields=()
+positional=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --jq | -q) jq_expr="$2"; shift 2 ;;
+    --input) input="$2"; shift 2 ;;
+    -X | --method) method="$2"; shift 2 ;;
+    -f | -F | --raw-field | --field) fields+=("$2"); shift 2 ;;
+    --repo | -R | --json | --assignee | --limit | -L) shift 2 ;;
+    --title | -t) title="$2"; shift 2 ;;
+    --body-file) body_file="$2"; shift 2 ;;
+    --head | -H) head="$2"; shift 2 ;;
+    --state | -s) pr_state="$2"; shift 2 ;;
+    --color | -c) color="$2"; shift 2 ;;
+    --description | -d) description="$2"; shift 2 ;;
+    --silent) silent=1; shift ;;
+    --public | --draft) shift ;;
+    *) positional+=("$1"); shift ;;
+  esac
+done
+
+unknown() {
+  echo "fake gh: unknown call: ${positional[*]-} ($method)" >&2
+  exit 97
+}
+
+emit() {
+  local json
+  json="$(cat)"
+  if [ -n "$jq_expr" ]; then
+    printf '%s\n' "$json" | jq -r "$jq_expr"
+  elif [ -z "$silent" ]; then
+    printf '%s\n' "$json"
+  fi
+}
+
+request_body() {
+  if [ "$input" = - ]; then
+    cat
+  else
+    cat "$input"
+  fi
+}
+
+file_body() {
+  if [ "$body_file" = - ]; then
+    cat
+  else
+    cat "$body_file"
+  fi
+}
+
+not_found() {
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+}
+
+require_repo() {
+  [ -f "$state/repo.json" ] || not_found
+}
+
+save() {
+  local file="$1" tmp
+  tmp="$(mktemp "$state/tmp.XXXXXX")"
+  cat >"$tmp"
+  mv "$tmp" "$state/$file"
+}
+
+json_or() {
+  if [ -f "$state/$1" ]; then cat "$state/$1"; else printf '%s\n' "$2"; fi
+}
+
+typed_fields() {
+  local field key value out="{}"
+  for field in ${fields[@]+"${fields[@]}"}; do
+    key="${field%%=*}"
+    value="${field#*=}"
+    case "$value" in
+      true | false | [0-9]*) out="$(printf '%s' "$out" | jq --arg k "$key" --argjson v "$value" '.[$k] = $v')" ;;
+      *) out="$(printf '%s' "$out" | jq --arg k "$key" --arg v "$value" '.[$k] = $v')" ;;
+    esac
+  done
+  printf '%s\n' "$out"
+}
+
+remote() {
+  printf '%s/%s.git' "${FAKE_REMOTES:?FAKE_REMOTES is not set}" "$1"
+}
+
+api() {
+  local path="$1" route repo
+  case "$path" in
+    user)
+      jq -n --arg login "${FAKE_GH_USER:-acme}" '{login: $login}' | emit
+      return
+      ;;
+  esac
+  repo="$(printf '%s' "$path" | cut -d/ -f2-3)"
+  route="${path#repos/"$repo"}"
+  case "$method $route" in
+    "GET ")
+      require_repo
+      emit <"$state/repo.json"
+      ;;
+    "PATCH ")
+      require_repo
+      request_body | jq -s '.[0] * .[1]' "$state/repo.json" - | save repo.json
+      ;;
+    "GET /actions/permissions/workflow")
+      require_repo
+      json_or workflow.json '{"default_workflow_permissions":"write","can_approve_pull_request_reviews":true}' | emit
+      ;;
+    "PUT /actions/permissions/workflow")
+      require_repo
+      typed_fields | save workflow.json
+      ;;
+    "GET /rulesets")
+      require_repo
+      json_or rulesets.json '[]' | jq '[.[] | {id, name, target, enforcement}]' | emit
+      ;;
+    "POST /rulesets")
+      require_repo
+      local id="${FAKE_RULESET_ID:-777}" body
+      body="$(request_body)"
+      json_or rulesets.json '[]' | jq --argjson id "$id" --argjson body "$body" '. + [$body + {id: $id}]' | save rulesets.json
+      jq -n --argjson id "$id" --argjson body "$body" '$body + {id: $id}' | emit
+      ;;
+    "GET /rulesets/"*)
+      require_repo
+      local found
+      found="$(json_or rulesets.json '[]' | jq --argjson id "${route#/rulesets/}" '.[] | select(.id == $id)')"
+      [ -n "$found" ] || not_found
+      printf '%s\n' "$found" | emit
+      ;;
+    "PUT /rulesets/"*)
+      require_repo
+      local body
+      body="$(request_body)"
+      json_or rulesets.json '[]' | jq --argjson id "${route#/rulesets/}" --argjson body "$body" 'map(if .id == $id then $body + {id: $id} else . end)' | save rulesets.json
+      ;;
+    "GET /contents/"*)
+      require_repo
+      local file="${route#/contents/}" ref=main
+      case "$file" in *"?ref="*) ref="${file#*\?ref=}"; file="${file%%\?*}" ;; esac
+      git --git-dir "$(remote "$repo")" cat-file -e "$ref:$file" 2>/dev/null || not_found
+      jq -n --arg path "$file" '{path: $path}' | emit
+      ;;
+    *) unknown ;;
+  esac
+}
+
+repo_create() {
+  local repo="$1"
+  if [ -f "$state/repo.json" ]; then
+    echo "GraphQL: Name already exists on this account (createRepository)" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$(remote "$repo")")"
+  git init -q --bare "$(remote "$repo")"
+  cat >"$(remote "$repo")/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+[ -n "${FAKE_REJECT_BRANCH:-}" ] || exit 0
+[ ! -f "$FAKE_STATE/allow-branch-pushes" ] || exit 0
+while read -r old new ref; do
+  if [ "$ref" = "refs/heads/$FAKE_REJECT_BRANCH" ]; then
+    echo "fake remote: $ref rejected" >&2
+    exit 1
+  fi
+done
+HOOK
+  chmod +x "$(remote "$repo")/hooks/pre-receive"
+  jq -n --arg name "$repo" --arg description "$description" '{
+    full_name: $name, description: $description,
+    allow_squash_merge: true, allow_merge_commit: true, allow_rebase_merge: true,
+    allow_auto_merge: false, allow_update_branch: false, delete_branch_on_merge: false,
+    squash_merge_commit_title: "COMMIT_OR_PR_TITLE", squash_merge_commit_message: "COMMIT_MESSAGES",
+    has_discussions: false,
+    security_and_analysis: {
+      secret_scanning: {status: "disabled"},
+      secret_scanning_push_protection: {status: "disabled"}
+    }
+  }' | save repo.json
+  printf 'bug\nenhancement\ndocumentation\ngood first issue\nhelp wanted\n' | jq -R '{name: ., color: "cccccc", description: ""}' | jq -s . | save labels.json
+}
+
+labels() {
+  require_repo
+  case "${positional[1]:-}" in
+    list) json_or labels.json '[]' | jq '[.[] | {name}]' | emit ;;
+    create)
+      local name="${positional[2]}"
+      if json_or labels.json '[]' | jq -e --arg n "$name" 'any(.[]; .name == $n)' >/dev/null; then
+        echo "label with name \"$name\" already exists" >&2
+        exit 1
+      fi
+      json_or labels.json '[]' | jq --arg n "$name" --arg c "$color" --arg d "$description" '. + [{name: $n, color: $c, description: $d}]' | save labels.json
+      ;;
+    *) unknown ;;
+  esac
+}
+
+select_pr() {
+  local key="$1"
+  json_or prs.json '[]' | jq --arg k "$key" '[.[] | select((.number | tostring) == $k or .headRefName == $k)][0] // empty'
+}
+
+prs() {
+  case "${positional[1]:-}" in
+    list)
+      json_or prs.json '[]' | jq --arg head "$head" --arg state "$pr_state" '[.[] | select(.headRefName == $head and ($state == "all" or (.state | ascii_downcase) == $state))]' | emit
+      ;;
+    view)
+      local found
+      found="$(select_pr "${positional[2]:-$(git rev-parse --abbrev-ref HEAD)}")"
+      [ -n "$found" ] || { echo "no pull requests found" >&2; exit 1; }
+      printf '%s\n' "$found" | emit
+      ;;
+    create)
+      local branch number body
+      branch="$(git rev-parse --abbrev-ref HEAD)"
+      number="$(json_or prs.json '[]' | jq 'length + 1')"
+      body="$(file_body)"
+      json_or prs.json '[]' | jq --argjson n "$number" --arg head "$branch" --arg title "$title" --arg body "$body" --arg at "${FAKE_NOW:-2026-11-18T10:05:00Z}" --arg repo "${FAKE_GH_REPO:-acme/acme-tool}" \
+        '. + [{number: $n, headRefName: $head, title: $title, body: $body, state: "OPEN", isDraft: true, createdAt: $at, url: "https://github.com/\($repo)/pull/\($n)"}]' | save prs.json
+      echo "https://github.com/${FAKE_GH_REPO:-acme/acme-tool}/pull/$number"
+      ;;
+    edit)
+      local key="${positional[2]}" body
+      [ -n "$(select_pr "$key")" ] || { echo "no pull requests found" >&2; exit 1; }
+      body="$(file_body)"
+      json_or prs.json '[]' | jq --arg k "$key" --arg body "$body" 'map(if (.number | tostring) == $k or .headRefName == $k then .body = $body else . end)' | save prs.json
+      ;;
+    *) unknown ;;
+  esac
+}
+
+secrets() {
+  require_repo
+  case "${positional[1]:-}" in
+    list) json_or secrets.json '[]' | emit ;;
+    *) unknown ;;
+  esac
+}
+
+case "${positional[0]:-}" in
+  api) api "${positional[1]:-}" ;;
+  repo)
+    case "${positional[1]:-}" in
+      create) repo_create "${positional[2]}" ;;
+      *) unknown ;;
+    esac
+    ;;
+  label) labels ;;
+  pr) prs ;;
+  secret) secrets ;;
+  *) unknown ;;
+esac

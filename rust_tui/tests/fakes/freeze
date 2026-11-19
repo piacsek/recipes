@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+printf 'freeze %s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '<svg width="800" height="120" font-family="FiraCode Nerd Font"></svg>\n' >"$out"

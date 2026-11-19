@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+printf 'tmux %s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
+for arg in "$@"; do
+  case "$arg" in
+    new-session) echo "@1" ;;
+    capture-pane) printf 'acme-tool: help\n' ;;
+  esac
+done
+exit 0

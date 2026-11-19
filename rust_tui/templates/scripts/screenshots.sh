@@ -35,7 +35,7 @@ render() {
       --font.size 14 --margin 0 "$@" </dev/null
     return
   fi
-  freeze "$home/$name.ansi" -o "$svg" --theme catppuccin-mocha "${font[@]}" \
+  freeze "$home/$name.ansi" -o "$svg" --theme catppuccin-mocha ${font[@]+"${font[@]}"} \
     --font.family "FiraCode Nerd Font" --font.size 14 --margin 0 "$@" </dev/null
   # FiraCode has no ✗ ⊘ ▸; Chrome's default fallback is wider and shifts the rest of the row, so
   # the borders jog. Menlo has them at (almost) the same advance, and DejaVu is its Linux twin.

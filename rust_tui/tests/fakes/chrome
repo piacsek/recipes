@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+printf 'chrome %s\n' "$*" >>"${FAKE_LOG:-/dev/null}"
+[ -z "${FAKE_CHROME_FAIL:-}" ] || exit 1
+for arg in "$@"; do
+  case "$arg" in
+    --screenshot=*) printf 'PNG of the help\n' >"${arg#--screenshot=}" ;;
+  esac
+done

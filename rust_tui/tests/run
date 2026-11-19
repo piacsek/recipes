@@ -38,23 +38,55 @@ else
   done
 fi
 
-passed=0
-failed=0
+jobs_max="${TESTS_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
+results="$(mktemp -d)"
+trap 'rm -rf "$results"' EXIT
+queue=()
 for file in "${files[@]}"; do
   tests="$(bash -c 'source "$1"; declare -F' _ "$file" | awk '$3 ~ /^test_/ { print $3 }')"
   for name in $tests; do
     if [ ${#only[@]} -gt 0 ] && ! printf '%s\n' "${only[@]}" | grep -qx "$name"; then
       continue
     fi
-    if output="$(bash -c 'set -euo pipefail; source "$1"; source "$2"; scratch_setup; trap scratch_teardown EXIT; "$3"' _ "$here/lib.sh" "$file" "$name" 2>&1)"; then
-      passed=$((passed + 1))
-      printf 'ok   %s %s\n' "$(basename "$file" .sh)" "$name"
-      printf '%s\n' "$output" | sed -n 's/^note: /     /p'
-    else
-      failed=$((failed + 1))
-      printf 'FAIL %s %s\n%s\n' "$(basename "$file" .sh)" "$name" "$output" | sed '3,$s/^/     /'
-    fi
+    queue+=("$file $name")
   done
+done
+
+run_one() {
+  local out="$results/$1"
+  if bash -c 'set -euo pipefail; source "$1"; source "$2"; scratch_setup; trap scratch_teardown EXIT; "$3"' _ "$here/lib.sh" "$2" "$3" >"$out.log" 2>&1; then
+    echo ok >"$out.status"
+  else
+    echo fail >"$out.status"
+  fi
+}
+
+i=0
+for entry in ${queue[@]+"${queue[@]}"}; do
+  while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do
+    sleep 0.2
+  done
+  run_one "$i" "${entry%% *}" "${entry#* }" &
+  i=$((i + 1))
+done
+wait
+
+passed=0
+failed=0
+i=0
+for entry in ${queue[@]+"${queue[@]}"}; do
+  file="${entry%% *}"
+  name="${entry#* }"
+  output="$(cat "$results/$i.log")"
+  if [ "$(cat "$results/$i.status")" = ok ]; then
+    passed=$((passed + 1))
+    printf 'ok   %s %s\n' "$(basename "$file" .sh)" "$name"
+    printf '%s\n' "$output" | sed -n 's/^note: /     /p'
+  else
+    failed=$((failed + 1))
+    printf 'FAIL %s %s\n%s\n' "$(basename "$file" .sh)" "$name" "$output" | sed '3,$s/^/     /'
+  fi
+  i=$((i + 1))
 done
 printf '%s passed, %s failed\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
