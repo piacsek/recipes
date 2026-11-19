@@ -74,12 +74,16 @@ resolve_tool() {
 }
 
 harness_check() {
-  local tool real
+  local tool real hint
   for tool in $HARNESS_TOOLS; do
     real="$(resolve_tool "$tool")"
     case "$real" in
       /*) ;;
-      *) echo "the test harness cannot find $tool on PATH" ;;
+      *)
+        hint=""
+        [ "$tool" != python3 ] || hint=" (a version-manager shim that fails outside your HOME gives the same result; put a real python3 first on PATH and rerun)"
+        echo "the test harness cannot find $tool on PATH$hint"
+        ;;
     esac
   done
 }
@@ -135,6 +139,7 @@ stop_once() {
   stoppable
   set +e
   FAKE_STOP_HOW="$1" FAKE_STOP_AT="$2" FAKE_STOP_NTH="${3:-1}" flow >"$SCRATCH/stopped.log" 2>&1
+  [ -z "${AFTER_STOP:-}" ] || "$AFTER_STOP"
   RERUN_OUTPUT="$(flow 2>&1)"
   RERUN_STATUS=$?
   set -e

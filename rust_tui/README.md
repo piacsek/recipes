@@ -215,6 +215,10 @@ The fakes stand in for these; no test has run them against github.com:
 - The rendered `AGENTS.md` rule (the unsuffixed binary on PATH is the Homebrew release; never
   `cargo install` the crate into PATH) is for people developing the project, as in conveyor, and
   stands beside the README's source install for users.
+- The rendered `.github/AGENTS.md` describes the ruleset `tui_repo` itself creates; it is not
+  rewritten for a ruleset the owner altered by hand.
+- An existing `docs/help.png` that is not a valid PNG is regenerated.
+- The label listing reads up to 500 labels.
 
 ## Bash
 

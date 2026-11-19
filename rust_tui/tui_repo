@@ -272,8 +272,11 @@ denylist_hits() {
 }
 
 our_origin() {
-  case "$origin" in
-    "git@github.com:$repo.git" | "https://github.com/$repo" | "https://github.com/$repo.git") return 0 ;;
+  local o r
+  o="$(printf '%s' "$origin" | tr '[:upper:]' '[:lower:]')"
+  r="$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')"
+  case "$o" in
+    "git@github.com:$r.git" | "https://github.com/$r" | "https://github.com/$r.git") return 0 ;;
   esac
   return 1
 }
@@ -649,7 +652,28 @@ do_repo() {
 plan_push() {
   plan=""
   if repo_exists && ! remote_empty; then return 0; fi
+  main_only_bootstrap
   plan="push main to $repo"
+}
+
+main_only_bootstrap() {
+  local sha rel n=0 foreign=""
+  [ -d "$dir" ] && git -C "$dir" rev-parse -q --verify refs/heads/main >/dev/null 2>&1 || return 0
+  rm -rf "$work/expected"
+  mkdir "$work/expected"
+  write_bootstrap "$work/expected"
+  git -C "$dir" ls-tree -r refs/heads/main >"$work/local-main"
+  while read -r _ _ sha rel; do
+    if [ -f "$work/expected/$rel" ] && [ "$sha" = "$(git hash-object "$work/expected/$rel")" ]; then
+      n=$((n + 1))
+    else
+      foreign="$foreign$rel"$'\n'
+    fi
+  done <"$work/local-main"
+  if [ "$(git -C "$dir" rev-list --count refs/heads/main)" = 1 ] && [ -z "$foreign" ] && [ "$n" = "$(find "$work/expected" -type f | wc -l | tr -d ' ')" ]; then
+    return 0
+  fi
+  die "main in $dir holds $(git -C "$dir" log --format=%s refs/heads/main | joined)${foreign:+ with $(printf '%s' "$foreign" | joined)}, not only this recipe's bootstrap; move that work off main and rerun"
 }
 
 do_push() {
@@ -790,10 +814,19 @@ $missing_label_lines
 EOF
 }
 
+wt_present() {
+  local top
+  [ -d "$wt" ] || return 1
+  top="$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ "$(cd "$top" && pwd -P)" = "$(cd "$wt" && pwd -P)" ]
+}
+
 plan_worktree() {
   plan=""
   phase0_active || return 0
-  [ -d "$wt" ] || plan="add the $branch worktree off origin/main at $wt"
+  if wt_present; then return 0; fi
+  [ ! -d "$wt" ] || [ -z "$(ls -A "$wt")" ] || die "$wt exists but is not a git worktree; move it away and rerun"
+  plan="add the $branch worktree off origin/main at $wt"
 }
 
 do_worktree() {
@@ -867,9 +900,9 @@ worktree_on_branch() {
 plan_render() {
   plan=""
   phase0_active || return 0
-  [ ! -d "$wt" ] || worktree_on_branch
+  if wt_present; then worktree_on_branch; fi
   [ "$(ahead)" = 0 ] || return 0
-  if [ -d "$wt" ]; then
+  if wt_present; then
     fresh_render
     compare_render
     [ -z "$render_foreign" ] || die "the phase 0 worktree holds changes the render would not write:$render_foreign; move them away and rerun"
@@ -921,7 +954,7 @@ ship_guard() {
 plan_ship() {
   plan=""
   phase0_active || return 0
-  [ ! -d "$wt" ] || ship_guard
+  if wt_present; then ship_guard; fi
   plan="ship the branch and open the draft pull request \"$title\""
 }
 
@@ -1019,7 +1052,7 @@ plan_record() {
   plan=""
   if phase0_active; then
     plan="write the pull request's number and opening time into plans/metrics.md and ship it"
-  elif pr_open && [ -d "$wt" ] && git -C "$wt" show "origin/$branch:plans/metrics.md" 2>/dev/null | grep -q '^| 0 |  |'; then
+  elif pr_open && wt_present && git -C "$wt" show "origin/$branch:plans/metrics.md" 2>/dev/null | grep -q '^| 0 |  |'; then
     record_guard
     plan="write the pull request's number and opening time into plans/metrics.md and ship it"
   fi

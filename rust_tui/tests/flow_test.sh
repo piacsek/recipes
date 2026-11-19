@@ -1315,6 +1315,72 @@ test_rerun_after_the_worktree_is_interrupted_ends_like_an_uninterrupted_run() {
   assert_eq "$STATE_DIFF" ""
 }
 
+test_rerun_after_the_worktree_is_interrupted_before_checkout_ends_like_an_uninterrupted_run() {
+  AFTER_STOP=leave_an_empty_worktree_directory stop_once fail '^git -C .* worktree add '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_a_directory_in_place_of_the_worktree_is_refused_by_name() {
+  sandbox
+  stop_before_the_worktree
+  mkdir -p "$PROJECT/.claude/worktrees/phase-0-foundations"
+  printf 'mine\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/notes.txt"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "$PROJECT/.claude/worktrees/phase-0-foundations exists but is not a git worktree"
+}
+
+test_rerun_after_a_failed_first_push_refuses_other_work_on_main() {
+  sandbox
+  stoppable
+  FAKE_STOP_HOW=fail FAKE_STOP_AT='^git -C .* push -q -u origin main$' flow >/dev/null 2>&1 || true
+  printf 'wip\n' >"$PROJECT/notes.txt"
+  git -C "$PROJECT" add notes.txt
+  git -C "$PROJECT" commit -q -m "Local notes"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "main in $PROJECT holds Local notes, Bootstrap with notes.txt, not only this recipe's bootstrap"
+}
+
+test_rerun_after_a_failed_first_push_leaves_the_remote_empty_when_main_holds_other_work() {
+  sandbox
+  stoppable
+  FAKE_STOP_HOW=fail FAKE_STOP_AT='^git -C .* push -q -u origin main$' flow >/dev/null 2>&1 || true
+  printf 'wip\n' >"$PROJECT/notes.txt"
+  git -C "$PROJECT" add notes.txt
+  git -C "$PROJECT" commit -q -m "Local notes"
+  flow >/dev/null 2>&1 || true
+  assert_eq "$(remote_git for-each-ref refs/heads)" ""
+}
+
+test_an_owner_in_another_case_reruns_on_the_same_clone() {
+  sandbox
+  flow >/dev/null
+  set +e
+  output="$(TUI_REPO_OWNER=Acme flow 2>&1)"
+  status=$?
+  set -e
+  refute_contains "$output" "not a clone"
+  assert_status "$status" 0
+}
+
+test_a_project_path_with_an_apostrophe_gives_the_capture_a_valid_command() {
+  sandbox
+  mkdir -p "$SCRATCH/o'neil"
+  PROJECTS="$SCRATCH/o'neil" flow >/dev/null
+  command="$(grep '^tmux .* respawn-pane ' "$FAKE_LOG" | sed 's/^.* respawn-pane -k -t @1 //')"
+  assert_contains "$command" "o\\'neil"
+  sh -n -c "$command" || fail "the capture command does not parse: $command"
+}
+
 test_rerun_after_the_render_fails_once_ends_like_an_uninterrupted_run() {
   stop_once fail '^mv -f .*\.tui_repo-partial '
   assert_file "$SCRATCH/stop/fired"
@@ -2290,4 +2356,13 @@ jq '. + [{"name": "adversarial-review-finding"}, {"name": "development-cycle-imp
 mv "$FAKE_STATE/labels.next" "$FAKE_STATE/labels.json"
 EOF
   chmod +x "$SCRATCH/meanwhile"
+}
+
+leave_an_empty_worktree_directory() {
+  mkdir -p "$PROJECT/.claude/worktrees/phase-0-foundations"
+}
+
+stop_before_the_worktree() {
+  stoppable
+  FAKE_STOP_HOW=fail FAKE_STOP_AT='^git -C .* worktree add ' flow >/dev/null 2>&1 || true
 }

@@ -111,7 +111,7 @@ typed_fields() {
 }
 
 remote() {
-  printf '%s/%s.git' "${FAKE_REMOTES:?FAKE_REMOTES is not set}" "$1"
+  printf '%s/%s.git' "${FAKE_REMOTES:?FAKE_REMOTES is not set}" "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
 }
 
 api() {

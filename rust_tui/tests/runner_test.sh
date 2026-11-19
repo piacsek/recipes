@@ -70,6 +70,14 @@ test_a_harness_tool_that_cannot_be_resolved_fails_the_run_before_any_test() {
   refute_contains "$output" "passed, "
 }
 
+test_an_unresolved_python3_names_a_version_manager_shim_as_the_likely_cause() {
+  stub_suite
+  set +e
+  output="$(ORIGINAL_PATH="$SCRATCH/empty" run_stub_suite 2>&1)"
+  set -e
+  assert_contains "$output" "a version-manager shim that fails outside your HOME"
+}
+
 stub_suite() {
   STUB="$SCRATCH/stub/tests"
   mkdir -p "$STUB" "$SCRATCH/empty"
