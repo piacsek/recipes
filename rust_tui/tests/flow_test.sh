@@ -654,10 +654,12 @@ test_rerun_after_the_merge_changes_nothing_twice() {
 sandbox() {
   local tool real
   mkdir -p "$SCRATCH/bin" "$SCRATCH/shared" "$SCRATCH/projects" "$SCRATCH/remotes"
-  for tool in bash sh env git perl python3 jq awk sed grep egrep tr cat mkdir rm rmdir ls cp mv ln chmod date dirname basename head tail wc sort uniq cut mktemp find xargs touch readlink diff tee id uname stat paste expr comm od cmp true false printf test; do
-    real="$(PATH="$ORIGINAL_PATH" command -v "$tool" || true)"
-    [ "$tool" != python3 ] || real="$(HOME="$REAL_HOME" PATH="$ORIGINAL_PATH" python3 -c 'import sys; print(sys.executable)')"
-    case "$real" in /*) ln -s "$real" "$SCRATCH/bin/$tool" ;; esac
+  for tool in $HARNESS_TOOLS; do
+    real="$(resolve_tool "$tool")"
+    case "$real" in
+      /*) ln -s "$real" "$SCRATCH/bin/$tool" ;;
+      *) fail "the test harness cannot find $tool on PATH" ;;
+    esac
   done
   for tool in gh cargo tmux freeze chrome sleep; do
     ln -s "$FAKES/$tool" "$SCRATCH/bin/$tool"

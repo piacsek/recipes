@@ -38,12 +38,34 @@ else
   done
 fi
 
+expected="flow render runner slow_gates"
+problems=""
+for base in $expected; do
+  [ -f "$here/${base}_test.sh" ] || problems="$problems${base}_test.sh is missing"$'\n'
+done
+for file in "$here"/*_test.sh; do
+  [ -f "$file" ] || continue
+  base="$(basename "$file" _test.sh)"
+  case " $expected " in
+    *" $base "*) ;;
+    *) problems="$problems${base}_test.sh is not in the expected list ($expected)"$'\n' ;;
+  esac
+done
+tools="$(bash -c 'source "$1"; harness_check' _ "$here/lib.sh")"
+[ -z "$tools" ] || problems="$problems$tools"$'\n'
+
 jobs_max="${TESTS_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 results="$(mktemp -d)"
 trap 'rm -rf "$results"' EXIT
 queue=()
 for file in "${files[@]}"; do
-  tests="$(bash -c 'source "$1"; declare -F' _ "$file" | awk '$3 ~ /^test_/ { print $3 }')"
+  [ -f "$file" ] || continue
+  if ! declared="$(bash -c 'set -e; source "$1"; declare -F' _ "$file" 2>"$results/source.err")"; then
+    problems="$problems$(basename "$file") could not be sourced: $(tr '\n' ' ' <"$results/source.err")"$'\n'
+    continue
+  fi
+  tests="$(printf '%s\n' "$declared" | awk '$3 ~ /^test_/ { print $3 }')"
+  [ -n "$tests" ] || problems="$problems$(basename "$file") holds no test"$'\n'
   for name in $tests; do
     if [ ${#only[@]} -gt 0 ] && ! printf '%s\n' "${only[@]}" | grep -qx "$name"; then
       continue
@@ -60,6 +82,11 @@ run_one() {
     echo fail >"$out.status"
   fi
 }
+
+if [ -n "$problems" ]; then
+  printf '%s' "$problems" | sed 's/^/tests\/run: /' >&2
+  exit 1
+fi
 
 i=0
 for entry in ${queue[@]+"${queue[@]}"}; do

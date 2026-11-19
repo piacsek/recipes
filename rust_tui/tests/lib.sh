@@ -1,8 +1,10 @@
 REAL_HOME="${REAL_HOME:-$HOME}"
 ORIGINAL_PATH="${ORIGINAL_PATH:-$PATH}"
+export REAL_HOME ORIGINAL_PATH
 RECIPE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TUI_REPO="$RECIPE/tui_repo"
 FAKES="$RECIPE/tests/fakes"
+HARNESS_TOOLS="bash sh env git perl python3 jq awk sed grep tr cat mkdir rm rmdir ls cp mv ln chmod date dirname basename head tail wc sort uniq cut mktemp find xargs touch readlink diff tee id uname stat paste expr comm od cmp true false printf test"
 
 scratch_setup() {
   SCRATCH="$(mktemp -d /tmp/rust_tui_test.XXXXXX)"
@@ -60,4 +62,23 @@ assert_executable() {
 
 assert_status() {
   [ "$1" = "$2" ] || fail "expected exit status $2, got $1"
+}
+
+resolve_tool() {
+  if [ "$1" = python3 ]; then
+    HOME="$REAL_HOME" PATH="$ORIGINAL_PATH" python3 -c 'import sys; print(sys.executable)' 2>/dev/null || true
+  else
+    PATH="$ORIGINAL_PATH" type -P "$1" 2>/dev/null || true
+  fi
+}
+
+harness_check() {
+  local tool real
+  for tool in $HARNESS_TOOLS; do
+    real="$(resolve_tool "$tool")"
+    case "$real" in
+      /*) ;;
+      *) echo "the test harness cannot find $tool on PATH" ;;
+    esac
+  done
 }
