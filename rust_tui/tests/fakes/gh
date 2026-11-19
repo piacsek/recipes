@@ -220,7 +220,7 @@ labels() {
     list) json_or labels.json '[]' | jq '[.[] | {name}]' | emit ;;
     create)
       local name="${positional[2]}"
-      if json_or labels.json '[]' | jq -e --arg n "$name" 'any(.[]; .name == $n)' >/dev/null; then
+      if json_or labels.json '[]' | jq -e --arg n "$name" 'any(.[]; (.name | ascii_downcase) == ($n | ascii_downcase))' >/dev/null; then
         echo "label with name \"$name\" already exists" >&2
         exit 1
       fi

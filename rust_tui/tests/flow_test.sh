@@ -353,7 +353,7 @@ test_flow_ends_with_the_tap_token_block() {
 
 test_flow_prints_the_rerun_line_above_the_tap_token_block() {
   sandbox
-  assert_eq "$(flow | tail -n 7 | head -n 1)" "After merging the pull request, rerun tui_repo acme-tool to require the version check on main."
+  assert_eq "$(flow | tail -n 7 | head -n 1)" "After merging the pull request, rerun tui_repo acme-tool to require the remaining checks."
 }
 
 test_flow_says_tap_token_is_set_when_it_is() {
@@ -639,6 +639,172 @@ test_rerun_after_the_merge_adds_audit_when_it_was_removed_by_hand() {
   merge_phase_0
   flow >/dev/null
   assert_eq "$(required_check_count)" "3"
+}
+
+test_rerun_before_the_merge_adds_audit_when_it_was_removed_by_hand() {
+  sandbox
+  flow >/dev/null
+  remove_required_check_by_hand audit
+  flow >/dev/null
+  assert_eq "$(required_check 1)" "audit"
+}
+
+test_rerun_before_the_merge_leaves_version_unrequired() {
+  sandbox
+  flow >/dev/null
+  remove_required_check_by_hand audit
+  flow >/dev/null
+  assert_eq "$(required_check_count)" "2"
+}
+
+test_rerun_before_the_merge_says_it_adds_audit() {
+  sandbox
+  flow >/dev/null
+  remove_required_check_by_hand audit
+  assert_contains "$(flow)" "added audit to the required checks"
+}
+
+test_rerun_leaves_a_label_renamed_by_hand_to_another_case() {
+  sandbox
+  flow >/dev/null
+  jq 'map(if .name == "Type: Maintenance" then .name = "type: maintenance" else . end)' "$FAKE_STATE/labels.json" >"$SCRATCH/labels.json"
+  mv "$SCRATCH/labels.json" "$FAKE_STATE/labels.json"
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+}
+
+test_pull_request_diagram_runs_the_tap_job_when_nothing_is_released() {
+  sandbox
+  flow >/dev/null
+  assert_contains "$(pr_body)" 'idle -->|"runs anyway"| tap'
+}
+
+test_pull_request_diagram_runs_the_stable_build_when_nothing_is_released() {
+  sandbox
+  flow >/dev/null
+  assert_contains "$(pr_body)" 'idle -->|"runs anyway"| stablebuild'
+}
+
+test_pull_request_diagram_updates_the_formula_only_when_it_is_behind() {
+  sandbox
+  flow >/dev/null
+  assert_contains "$(pr_body)" 'tap -->|"only when behind the newest release"| formula'
+}
+
+test_pull_request_diagram_moves_stable_only_when_it_is_behind() {
+  sandbox
+  flow >/dev/null
+  assert_contains "$(pr_body)" 'stablebuild -->|"only when behind the newest release"| stable'
+}
+
+test_flow_refuses_a_name_on_the_denylist() {
+  sandbox
+  printf 'ACME-TOOL\n' >>"$SCRATCH/shared/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the name matches the denylist"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_flow_refuses_a_description_on_the_denylist() {
+  sandbox
+  set +e
+  output="$(TUI_REPO_DESCRIPTION="Keeps $SECRET_TERM in line" flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the description matches the denylist"
+  refute_contains "$output" "$SECRET_TERM"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_flow_refuses_an_owner_on_the_denylist() {
+  sandbox
+  printf 'acme\n' >>"$SCRATCH/shared/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the owner matches the denylist"
+}
+
+test_flow_refuses_a_tap_on_the_denylist() {
+  sandbox
+  printf 'homebrew-tap\n' >>"$SCRATCH/shared/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the tap matches the denylist"
+}
+
+test_flow_refuses_an_author_on_the_denylist() {
+  sandbox
+  printf 'acme author\n' >>"$SCRATCH/shared/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the author matches the denylist"
+}
+
+test_flow_ignores_blank_lines_in_the_denylist() {
+  sandbox
+  printf '\n\n' >>"$SCRATCH/shared/denylist"
+  refute_contains "$(flow 2>&1)" "matches the denylist"
+}
+
+test_flow_matches_the_inputs_against_an_existing_denylist() {
+  sandbox
+  mkdir -p "$HOME/.config/acme-tool-dev"
+  printf 'fleet\n' >"$HOME/.config/acme-tool-dev/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the description matches the denylist"
+}
+
+test_flow_says_an_existing_denylist_is_readable_and_not_empty() {
+  sandbox
+  mkdir -p "$HOME/.config/acme-tool-dev"
+  printf 'own-term\n' >"$HOME/.config/acme-tool-dev/denylist"
+  assert_contains "$(flow)" "denylist: $HOME/.config/acme-tool-dev/denylist is a readable, non-empty file"
+}
+
+test_flow_refuses_an_empty_existing_denylist() {
+  sandbox
+  mkdir -p "$HOME/.config/acme-tool-dev"
+  : >"$HOME/.config/acme-tool-dev/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "$HOME/.config/acme-tool-dev/denylist is not a readable, non-empty file"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_flow_refuses_a_dangling_denylist_link() {
+  sandbox
+  mkdir -p "$HOME/.config/acme-tool-dev"
+  ln -s "$SCRATCH/nowhere" "$HOME/.config/acme-tool-dev/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "$HOME/.config/acme-tool-dev/denylist is not a readable, non-empty file"
 }
 
 test_rerun_after_the_merge_changes_nothing_twice() {

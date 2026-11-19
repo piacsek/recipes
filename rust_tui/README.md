@@ -12,15 +12,15 @@ rust_tui/tui_repo acme-tool --description "Keeps the acme fleet in line"
 ```
 
 It prints what each step will do or skip, asks once, then runs the steps. The last lines are the
-pull request link, a reminder to rerun after the merge (while the scaffold is not on `main`) and the
-`TAP_TOKEN` instructions.
+pull request link, a reminder to rerun after the merge to require the remaining checks (while the
+scaffold is not on `main`) and the `TAP_TOKEN` instructions.
 
 | Input | Flag | Environment | Default |
 | --- | --- | --- | --- |
 | Name | first argument | `TUI_REPO_NAME` | asked |
 | Description | `--description` | `TUI_REPO_DESCRIPTION` | asked |
 | GitHub owner | `--owner` | `TUI_REPO_OWNER` | `gh api user` |
-| Tap repository | `--tap` | `TUI_REPO_TAP` | `<owner>/homebrew-tap` |
+| Tap repository | `--tap` | `TUI_REPO_TAP` | `<owner>/homebrew-tap` (the part after `homebrew-` takes letters, digits, `-` and `_`, no `.`) |
 | LICENSE author | `--author` | `TUI_REPO_AUTHOR` | `git config user.name` |
 | Skip the confirmation | `--yes` | `TUI_REPO_YES=1` | asks |
 | Projects directory | | `PROJECTS_DIR` | `~/projects` |
@@ -32,13 +32,26 @@ GitHub or `~/.config`.
 
 The name gives three variants: `acme_tool` (Rust identifiers), `ACME_TOOL` (the denylist variable)
 and `AcmeTool` (the Homebrew formula class). It must start with a lowercase letter, hold only
-lowercase letters, digits and single hyphens, stay within 64 characters and not be a Rust keyword or
-a name cargo or Windows refuses.
+lowercase letters, digits and single hyphens, stay within 64 characters and not be a Rust keyword, a
+name cargo or Windows refuses, or `tempfile` or `toml` (the project's dev-dependencies, which a
+package of the same name could not depend on). Test helpers and constants have fixed names
+(`launch`, `PACKAGE_ENTRY`, `link_dev_binary`), so a name such as `stdout`, `stderr` or
+`version-line` is accepted.
 
 Every input is checked before anything is created. Before the first side effect it also checks that
 the shared denylist exists (when the project's link is missing) and, while phase 0 is still to do,
 that `tmux`, `freeze`, Chrome or chromium, `python3` and `cargo` are installed, one line per missing
 tool with how to install it.
+
+The name, description, owner, tap and author are matched against the denylist (the project's
+`~/.config/<name>-dev/denylist` when it exists, else the shared one), case-insensitively, ignoring
+blank lines. Each input that matches is named and the run stops; the list and the matching line are
+never printed. An existing `~/.config/<name>-dev/denylist` must resolve to a readable, non-empty
+file, and the run says it does.
+
+Every probe of GitHub or git tells "confirmed absent" (a 404, an unset origin) from "could not find
+out" (any other failure). The second stops the run, naming what it could not find out, before
+anything changes.
 
 ## Steps
 
@@ -75,17 +88,25 @@ nothing and exits 0.
 - An existing `~/projects/<name>` is fine when it is a clone of `<owner>/<name>` (origin
   `git@github.com:<owner>/<name>.git` or its https form). Anything else stops the run before any
   side effect.
+- An interrupted first local setup is finished: a `~/projects/<name>` that holds only what the
+  bootstrap writes (its directories, files byte-identical to the bootstrap's, and a `.git` with no
+  commit whose origin is unset or `<owner>/<name>`) is completed. A changed or extra file, another
+  origin or a commit stops the run.
 - The ruleset is found by name and created only when missing. It is never replaced or duplicated.
-  Once `main` holds `scripts/ship.sh`, a rerun adds whichever of `check`, `audit` and `version` is
-  missing, after the checks already there, and says what it added. It never removes or reorders a
-  check.
-- Labels are created when missing and never changed.
+  A rerun adds whichever of `check` and `audit` is missing, and, once `main` holds
+  `scripts/ship.sh`, `version`, after the checks already there, and says what it added. It never
+  removes or reorders a check.
+- Labels are created when missing (compared case-insensitively, as GitHub does) and never changed.
 - Phase 0 is left alone when the branch is on GitHub but not in your worktree, a pull request for it
   exists in any state, `main` holds `scripts/ship.sh`, or the local branch holds work of its own.
 - A half-way local branch is finished: its worktree exists and it is either level with
   `origin/main` (the render or the screenshot failed) or one commit ahead with the phase 0 title as
   its subject (the push or the pull request failed). The rerun renders, shoots, ships or opens the
   pull request from where it stopped.
+- The render goes to a fresh temporary directory first and is compared with the worktree. Files
+  that already match are kept, missing or partial ones are copied in, and the render step counts as
+  done only when every rendered file matches. A worktree change the render would not write (an
+  untracked file, an edit to a tracked or rendered file) stops the run and names its paths.
 
 ## Owner steps
 
@@ -101,8 +122,8 @@ nothing and exits 0.
       pbpaste | gh secret set TAP_TOKEN --repo <owner>/<name>
       ```
 3. Mark the pull request ready and merge it. The merge releases v0.0.1.
-4. Rerun `tui_repo <name>`. It adds `version` to the required checks, which can only be required
-   once `main` runs it.
+4. Rerun `tui_repo <name>` to require the remaining checks. It adds `version`, which can only be
+   required once `main` runs it.
 
 ## Description characters
 
@@ -119,7 +140,7 @@ the Homebrew formula. Characters that would change meaning in one of them are re
 | `#{`, `#@` | refused: Ruby interpolation |
 | non-ASCII, tabs, control characters, line breaks | refused |
 | first character | must be a capital letter (Homebrew's rule) |
-| last character | no full stop (the README adds one) and no space |
+| last character | no full stop, `?` or `!` (the README adds a full stop) and no space |
 | length | at most 80 (Homebrew's limit) |
 
 ## Tests
@@ -136,6 +157,15 @@ runs one test. No test reaches GitHub or the network or touches the real `~/.con
 a scratch `HOME`, and `tests/fakes/` stands in for `gh`, `cargo`, `tmux`, `freeze`, Chrome and
 `sleep` (the fake `gh` keeps its repositories as bare git remotes in the scratch directory). Tests
 are red first, assert one thing per line, and keep their helpers at the bottom of the file.
+
+## Not yet proven against real GitHub
+
+The fakes stand in for these; no test has run them against github.com:
+
+- `gh label create` with an empty `--description` (for `adversarial-review-finding`).
+- The ruleset `PUT` as sent, when a rerun adds a required check.
+- The rerun after the phase 0 merge, which adds `version`.
+- The interactive flow on a terminal: the questions and the `Go ahead? [y/N]` prompt.
 
 ## Bash
 

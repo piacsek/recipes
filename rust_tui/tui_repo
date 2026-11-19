@@ -95,6 +95,7 @@ description_problem() {
   [ "${#d}" -le 80 ] || { echo "description: at most 80 characters (Homebrew's limit), this one has ${#d}"; return; }
   case "$d" in [A-Z]*) ;; *) echo "description: start with a capital letter (Homebrew's rule; it also keeps the README line from turning into a heading or a list)"; return ;; esac
   case "$d" in *.) echo "description: no full stop at the end (Homebrew's rule; the README adds one)"; return ;; esac
+  case "$d" in *'?' | *!) echo "description: no ? or ! at the end (the README adds a full stop)"; return ;; esac
   case "$d" in *' ') echo "description: no space at the end"; return ;; esac
   case "$d" in *'"'*) echo "description: no double quote (\"), it ends the string in Cargo.toml, flake.nix, the formula and the Rust sources"; return ;; esac
   case "$d" in *\\*) echo "description: no backslash (\\), it starts an escape in TOML, Nix, Ruby, Rust and the formula's heredoc"; return ;; esac
@@ -112,7 +113,7 @@ owner_problem() {
 }
 
 tap_problem() {
-  local pattern='^[A-Za-z0-9]+(-[A-Za-z0-9]+)*/homebrew-[A-Za-z0-9._-]+$'
+  local pattern='^[A-Za-z0-9]+(-[A-Za-z0-9]+)*/homebrew-[A-Za-z0-9_-]+$'
   [ -n "$1" ] || { echo "no tap repository given (TUI_REPO_TAP or --tap)"; return; }
   [[ $1 =~ $pattern ]] || echo "tap \"$1\": must be <owner>/homebrew-<name>, the shape brew taps"
 }
@@ -226,7 +227,6 @@ trap 'rm -rf "$work"' EXIT
 link="$HOME/.config/$name-dev/denylist"
 title="Set up $name with its checks, guidelines and automatic releases"
 record_title="Record the phase 0 pull request in the metrics"
-required="check audit version"
 steps="denylist local repo push settings permissions ruleset labels worktree render screenshot ship body record"
 wanted_settings="true,false,false,false,false,true,COMMIT_OR_PR_TITLE,COMMIT_MESSAGES,true,enabled,enabled"
 wanted_labels="adversarial-review-finding|ededed|
@@ -243,6 +243,10 @@ origin_of() {
     1) origin="" ;;
     *) die "could not find out the origin of $1" ;;
   esac
+}
+
+denylist_hits() {
+  VALUE="$1" awk 'BEGIN { v = tolower(ENVIRON["VALUE"]) } { sub(/\r$/, "") } $0 != "" && index(v, tolower($0)) { n++ } END { print n + 0 }' "$2"
 }
 
 our_origin() {
@@ -423,9 +427,11 @@ load_ruleset() {
 }
 
 load_missing_checks() {
+  local required="check audit"
   missing=""
   load_ruleset
   [ "$known_ruleset" != none ] || return 0
+  if scaffold_on_main; then required="check audit version"; fi
   query "the required checks of the main ruleset" gh api "repos/$repo/rulesets/$known_ruleset" --jq "([\"${required// /\",\"}\"] - [.rules[] | select(.type == \"required_status_checks\") | .parameters.required_status_checks[].context]) | join(\", \")"
   missing="$probe_out"
 }
@@ -471,7 +477,7 @@ load_missing_labels() {
   fi
   while IFS= read -r line; do
     label="${line%%|*}"
-    printf '%s\n' "$have" | grep -qxF -- "$label" || missing_label_lines="$missing_label_lines$line"$'\n'
+    printf '%s\n' "$have" | grep -qixF -- "$label" || missing_label_lines="$missing_label_lines$line"$'\n'
   done <<EOF
 $wanted_labels
 EOF
@@ -578,7 +584,6 @@ plan_ruleset() {
     plan="create the main ruleset, requiring check and audit"
     return 0
   fi
-  scaffold_on_main || return 0
   load_missing_checks
   [ -z "$missing" ] || plan="add $missing to the required checks"
 }
@@ -625,7 +630,6 @@ do_ruleset() {
 EOF
     known_ruleset=""
   fi
-  scaffold_on_main || return 0
   load_missing_checks
   id="$known_ruleset"
   [ -n "$missing" ] || return 0
@@ -797,9 +801,11 @@ flowchart TD
   build -->|"three tarballs"| publish["publish"]
   publish --> release["GitHub release"]
   publish --> tap["tap"]
-  tap --> formula["Formula in $tap_repo"]
+  idle -->|"runs anyway"| tap
+  tap -->|"only when behind the newest release"| formula["Formula in $tap_repo"]
   publish --> stablebuild["stable-build"]
-  stablebuild --> stable["stable"]
+  idle -->|"runs anyway"| stablebuild
+  stablebuild -->|"only when behind the newest release"| stable["stable"]
   stable --> moved["stable branch at vX.Y.Z"]
 \`\`\`
 EOF
@@ -871,6 +877,24 @@ fi
 if [ ! -e "$link" ] && [ ! -L "$link" ] && [ ! -f "$shared_denylist" ]; then
   die "the shared denylist $shared_denylist is missing, so $link cannot link to it; create it or set TUI_REPO_SHARED_DENYLIST"
 fi
+denylist="$shared_denylist"
+if [ -e "$link" ] || [ -L "$link" ]; then
+  { [ -f "$link" ] && [ -r "$link" ] && [ -s "$link" ]; } || die "$link is not a readable, non-empty file; fix or remove it"
+  echo "denylist: $link is a readable, non-empty file"
+  denylist="$link"
+fi
+[ -r "$denylist" ] || die "$denylist cannot be read"
+hits=""
+for input in name description owner tap_repo author; do
+  if [ "$(denylist_hits "${!input}" "$denylist")" != 0 ]; then
+    case "$input" in tap_repo) input=tap ;; esac
+    hits="$hits$input "
+  fi
+done
+for input in $hits; do
+  echo "tui_repo: the $input matches the denylist; pick another" >&2
+done
+[ -z "$hits" ] || exit 1
 command -v gh >/dev/null || die "gh is missing: brew install gh"
 active=""
 if phase0_active; then active=1; fi
@@ -921,7 +945,7 @@ if [ -z "$url" ] && local_branch && ! ours; then
   echo "tui_repo: $branch exists locally with other work and no pull request, so phase 0 was left alone"
 fi
 if ! scaffold_on_main; then
-  echo "After merging the pull request, rerun tui_repo $name to require the version check on main."
+  echo "After merging the pull request, rerun tui_repo $name to require the remaining checks."
 fi
 query "whether TAP_TOKEN is set" gh secret list --repo "$repo" --json name --jq '.[].name'
 if printf '%s\n' "$probe_out" | grep -qx TAP_TOKEN; then

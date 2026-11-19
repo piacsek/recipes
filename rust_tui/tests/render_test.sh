@@ -147,6 +147,41 @@ test_a_dev_dependency_name_is_refused() {
   assert_contains "$output" "reserved"
 }
 
+test_a_description_ending_in_a_question_mark_is_refused() {
+  set +e
+  output="$(render_env acme-tool "Keeps the acme fleet in line?" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "description: no ? or ! at the end"
+}
+
+test_a_description_ending_in_an_exclamation_mark_is_refused() {
+  set +e
+  output="$(render_env acme-tool "Keeps the acme fleet in line!" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "description: no ? or ! at the end"
+}
+
+test_a_tap_with_a_dot_is_refused() {
+  set +e
+  output="$(render_env acme-tool "$DESCRIPTION" env TUI_REPO_TAP=acme/homebrew-my.tap "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "tap \"acme/homebrew-my.tap\""
+}
+
+test_a_tap_with_an_underscore_is_accepted() {
+  set +e
+  render_env acme-tool "$DESCRIPTION" env TUI_REPO_TAP=acme/homebrew-my_tap "$TUI_REPO" --render-only "$SCRATCH/out" >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+}
+
 test_render_runs_the_binary_by_its_name() {
   render acme-tool
   assert_contains "$(cat "$OUT/tests/cli.rs")" 'env!("CARGO_BIN_EXE_acme-tool")'
