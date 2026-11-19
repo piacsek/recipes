@@ -381,6 +381,41 @@ test_render_credits_conveyor_to_the_recipes_author() {
   assert_contains "$(flat "$OUT/.github/AGENTS.md")" "conveyor, a sibling project by the recipe's author;"
 }
 
+test_a_bash_keyword_as_name_is_refused() {
+  set +e
+  output="$(render_env case "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "name \"case\": a bash keyword or builtin"
+}
+
+test_the_bash_builtin_echo_as_name_is_refused() {
+  set +e
+  output="$(render_env echo "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "name \"echo\": a bash keyword or builtin"
+}
+
+test_the_bash_builtin_cd_as_name_is_refused() {
+  set +e
+  output="$(render_env cd "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "name \"cd\": a bash keyword or builtin"
+}
+
+test_an_ordinary_command_name_renders() {
+  set +e
+  render_env ls "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+}
+
 render() {
   OUT="$SCRATCH/out"
   render_env "$1" "$DESCRIPTION" "$TUI_REPO" --render-only "$OUT" >/dev/null

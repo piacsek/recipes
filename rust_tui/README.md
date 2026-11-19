@@ -24,7 +24,7 @@ scaffold is not on `main`) and the `TAP_TOKEN` instructions.
 | LICENSE author | `--author` | `TUI_REPO_AUTHOR` | `git config user.name` |
 | Skip the confirmation | `--yes` | `TUI_REPO_YES=1` | asks |
 | Projects directory | | `PROJECTS_DIR` | `~/projects` |
-| Shared denylist | | `TUI_REPO_SHARED_DENYLIST` | `~/.config/conveyor-dev/denylist` |
+| Shared denylist | | `TUI_REPO_SHARED_DENYLIST` (a relative path is taken from the current directory) | `~/.config/conveyor-dev/denylist` |
 | Chrome binary | | `CHROME` | Google Chrome, then `google-chrome`, then `chromium` |
 
 `--render-only <empty dir>` renders the template there (and runs `cargo fmt`) without touching git,
@@ -34,14 +34,16 @@ The name gives three variants: `acme_tool` (Rust identifiers), `ACME_TOOL` (the 
 and `AcmeTool` (the Homebrew formula class). It must start with a lowercase letter, hold only
 lowercase letters, digits and single hyphens, stay within 64 characters and not be a Rust keyword, a
 name cargo or Windows refuses, or the name of any package in the template's `Cargo.lock` (read at
-run time; two packages of one name break the release scripts). Test helpers and constants have fixed names
-(`launch`, `PACKAGE_ENTRY`, `link_dev_binary`), so a name such as `stdout`, `stderr` or
-`version-line` is accepted.
+run time; two packages of one name break the release scripts), and not be a bash keyword or builtin
+(`case`, `echo`, `cd`: the rendered scripts would run the builtin instead). Test helpers and constants have fixed names
+(`launch`, `PACKAGE_ENTRY`, `link_dev_binary`), so a name such as `stdout`, `stderr`,
+`version-line` or `ls` is accepted.
 
 Every input is checked before anything is created. Before the first side effect it also checks that
 the shared denylist is a readable, non-empty file (when the project's link is missing) and, while phase 0 is still to do,
 that `tmux`, `freeze`, Chrome or chromium, `python3` and `cargo` are installed, one line per missing
-tool with how to install it.
+tool with how to install it. It looks the tap repository up once (read only) and stops when it does
+not exist or when it cannot find out.
 
 The name, description, owner, tap and author are matched against the denylist (the project's
 `~/.config/<name>-dev/denylist` when it exists, else the shared one), case-insensitively, ignoring
@@ -60,7 +62,7 @@ anything changes.
 | denylist link | `~/.config/<name>-dev/denylist` exists (a file of your own is kept) |
 | local repository | `~/projects/<name>` is a git repository with a commit |
 | GitHub repository | `<owner>/<name>` exists |
-| push main | `main` is on GitHub |
+| push main | the GitHub repository has any branch (`main` is pushed only into one with none) |
 | repository settings | squash only, delete merged branches, discussions, secret scanning and push protection are already set |
 | Actions token permissions | read only, no pull request approval |
 | main ruleset | a branch ruleset of this repository targets `main` and, once the scaffold is on `main`, requires `check`, `audit` and `version` |
@@ -85,6 +87,10 @@ Every step checks the real state first and prints `==> <step>: already done, ski
 nothing to do. Rerunning after a failure finishes the job; rerunning on a finished project changes
 nothing and exits 0.
 
+- An existing `<owner>/<name>` is taken over only when this recipe started it: it has no branch,
+  or its default branch is `main` and `main` holds exactly the bootstrap (with or without
+  `CHANGELOG.md`) or the scaffold (`scripts/ship.sh` and `plans/phase-0-foundations.md`). Anything
+  else stops the run in the preflight, before the plan, with one line saying what was found.
 - An existing `~/projects/<name>` is fine when it is a clone of `<owner>/<name>` (origin
   `git@github.com:<owner>/<name>.git` or its https form). Anything else stops the run before any
   side effect.
@@ -93,8 +99,9 @@ nothing and exits 0.
   commit whose origin is unset or `<owner>/<name>`) is completed. A changed or extra file, another
   origin or a commit stops the run.
 - The ruleset is found by what it protects: a ruleset whose source is this repository, whose target
-  is `branch` and whose conditions include `~DEFAULT_BRANCH` or `refs/heads/main`, whatever its
-  name. It is created only when none matches and never replaced; when more than one matches, the
+  is `branch` and whose conditions include `~DEFAULT_BRANCH`, `~ALL`, `refs/heads/main`,
+  `refs/heads/*` or `refs/heads/**`, whatever its name. The listing is read page by page. A matching
+  ruleset whose enforcement is not `active` is left as is, and the plan and the closing lines say so. It is created only when none matches and never replaced; when more than one matches, the
   run names them and stops before any change.
   A rerun adds whichever of `check` and `audit` is missing, and, once `main` holds
   `scripts/ship.sh`, `version`, after the checks already there, and says what it added. It never
@@ -106,6 +113,9 @@ nothing and exits 0.
   `origin/main` (the render or the screenshot failed) or one commit ahead with the phase 0 title as
   its subject (the push or the pull request failed). The rerun renders, shoots, ships or opens the
   pull request from where it stopped.
+- Before it ships from the worktree (the phase 0 commit or the metrics row), the script requires
+  `phase-0-foundations` to be checked out there and the worktree to hold nothing but its own change.
+  Anything else stops the run and names the paths, since `scripts/ship.sh` commits every change.
 - The render goes to a fresh temporary directory first and is compared with the worktree. Files
   that already match are kept, missing or partial ones are copied in, and the render step counts as
   done only when every rendered file matches. A worktree change the render would not write (an
@@ -185,6 +195,8 @@ The fakes stand in for these; no test has run them against github.com:
   reaches GitHub or the real `~/.config`.
 - A blank line in a denylist makes the rendered scrub check refuse every ship, which fails safe.
 - The closing `TAP_TOKEN` instructions use `pbpaste`: the recipe targets the owner's Mac.
+- Rulesets are recognised by the literal include patterns `~DEFAULT_BRANCH`, `~ALL`,
+  `refs/heads/main`, `refs/heads/*` and `refs/heads/**`; excludes are not evaluated.
 
 ## Bash
 

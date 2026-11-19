@@ -8,6 +8,7 @@ fi
 
 recipe="$(cd "$(dirname "$0")" && pwd)"
 shared_denylist="${TUI_REPO_SHARED_DENYLIST:-$HOME/.config/conveyor-dev/denylist}"
+case "$shared_denylist" in /*) ;; *) shared_denylist="$PWD/$shared_denylist" ;; esac
 templates="$recipe/templates"
 keys="name snake upper class owner tap_repo tap description author year ruleset_id date main_sha start pr_ref draft_pr"
 
@@ -82,6 +83,10 @@ name_problem() {
   for word in $reserved_names; do
     [ "$1" != "$word" ] || { echo "name \"$1\": reserved (a Rust keyword, or a name cargo or Windows refuses)"; return; }
   done
+  if { compgen -k; compgen -b; } | grep -qxF -- "$1"; then
+    echo "name \"$1\": a bash keyword or builtin, so typing $1 in bash would run the shell's own word instead of the binary"
+    return
+  fi
   if sed -n 's/^name = "\(.*\)"$/\1/p' "$templates/Cargo.lock" | grep -vxF '{{name}}' | grep -qxF -- "$1"; then
     echo "name \"$1\": reserved, a package of that name is in the template's Cargo.lock, and two packages of one name break the release scripts"
   fi
@@ -340,6 +345,9 @@ known_scaffold=""
 known_branch=""
 known_main=""
 known_ruleset=""
+known_enforcement=""
+known_ruleset_label=""
+plan_note=""
 known_empty=""
 branch_names=""
 main_foreign=""
@@ -489,20 +497,29 @@ check_ownership() {
 }
 
 load_ruleset() {
-  local id found=""
+  local id found="" enforcement=""
   [ -z "$known_ruleset" ] || return 0
   known_ruleset=none
   repo_exists || return 0
-  query "the rulesets of $repo" gh api "repos/$repo/rulesets" --jq ".[] | select(.source_type == \"Repository\" and (.source | ascii_downcase) == \"$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')\" and .target == \"branch\") | .id"
+  query "the rulesets of $repo" gh api --paginate "repos/$repo/rulesets" --jq ".[] | select(.source_type == \"Repository\" and (.source | ascii_downcase) == \"$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')\" and .target == \"branch\") | .id"
   for id in $probe_out; do
-    query "ruleset $id of $repo" gh api "repos/$repo/rulesets/$id" --jq 'select(any(.conditions.ref_name.include[]?; . == "~DEFAULT_BRANCH" or . == "refs/heads/main")) | "\(.id) \"\(.name)\""'
-    [ -z "$probe_out" ] || found="$found$probe_out"$'\n'
+    query "ruleset $id of $repo" gh api "repos/$repo/rulesets/$id" --jq 'select(any(.conditions.ref_name.include[]?; IN("~DEFAULT_BRANCH", "~ALL", "refs/heads/main", "refs/heads/*", "refs/heads/**"))) | "\(.enforcement) \(.id) \"\(.name)\""'
+    [ -n "$probe_out" ] || continue
+    enforcement="${probe_out%% *}"
+    found="$found${probe_out#* }"$'\n'
   done
   found="$(printf '%s' "$found" | sed '/^$/d')"
   [ -n "$found" ] || return 0
   [ "$(printf '%s\n' "$found" | wc -l | tr -d ' ')" = 1 ] ||
     die "more than one ruleset of $repo protects main: $(printf '%s\n' "$found" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }'); keep one and rerun"
   known_ruleset="${found%% *}"
+  known_ruleset_label="$found"
+  known_enforcement="$enforcement"
+}
+
+ruleset_inactive() {
+  load_ruleset
+  [ "$known_ruleset" != none ] && [ "$known_enforcement" != active ]
 }
 
 load_missing_checks() {
@@ -666,6 +683,9 @@ plan_ruleset() {
   fi
   load_missing_checks
   [ -z "$missing" ] || plan="add $missing to the required checks"
+  if ruleset_inactive; then
+    plan_note="ruleset $known_ruleset_label is $known_enforcement, not active; left as is"
+  fi
 }
 
 do_ruleset() {
@@ -1038,6 +1058,8 @@ done
 [ -z "$hits" ] || exit 1
 command -v gh >/dev/null || die "gh is missing: brew install gh"
 check_ownership
+lookup "whether $tap_repo exists" gh api "repos/$tap_repo" --jq .full_name ||
+  die "the tap repository $tap_repo does not exist, or gh cannot see it; create it or pass another --tap"
 active=""
 if phase0_active; then active=1; fi
 tools="$(missing_tools)"
@@ -1046,12 +1068,13 @@ tools="$(missing_tools)"
 echo "tui_repo: $repo in $dir"
 pending=""
 for s in $steps; do
+  plan_note=""
   "plan_$s"
   if [ -n "$plan" ]; then
-    printf '  %s: %s\n' "$(label_of "$s")" "$plan"
+    printf '  %s: %s%s\n' "$(label_of "$s")" "$plan" "${plan_note:+ ($plan_note)}"
     pending=1
   else
-    printf '  %s: already done\n' "$(label_of "$s")"
+    printf '  %s: already done%s\n' "$(label_of "$s")" "${plan_note:+ ($plan_note)}"
   fi
 done
 
@@ -1095,6 +1118,9 @@ EOF
 fi
 if ! scaffold_on_main; then
   echo "After merging the pull request, rerun tui_repo $name to require the remaining checks."
+fi
+if ruleset_inactive; then
+  echo "tui_repo: the main ruleset $known_ruleset_label is $known_enforcement, not active, so it enforces nothing; it was left as is"
 fi
 query "whether TAP_TOKEN is set" gh secret list --repo "$repo" --json name --jq '.[].name'
 if printf '%s\n' "$probe_out" | grep -qx TAP_TOKEN; then

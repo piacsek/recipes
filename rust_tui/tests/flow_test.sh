@@ -1832,6 +1832,90 @@ test_rerun_after_a_cut_metrics_commit_records_the_pull_request() {
   assert_contains "$(remote_git show phase-0-foundations:plans/metrics.md)" $'\n| 0 | #1 | '
 }
 
+test_flow_links_the_denylist_to_an_absolute_path_given_a_relative_one() {
+  sandbox
+  (cd "$SCRATCH" && SHARED_DENYLIST=shared/denylist flow >/dev/null)
+  assert_eq "$(readlink "$HOME/.config/acme-tool-dev/denylist")" "$SCRATCH/shared/denylist"
+}
+
+test_rerun_takes_a_ruleset_on_all_branches_as_the_main_ruleset() {
+  sandbox
+  ruleset_by_hand_including '"~ALL"'
+  flow >/dev/null
+  assert_eq "$(jq length "$FAKE_STATE/rulesets.json")" "1"
+}
+
+test_rerun_takes_a_ruleset_on_refs_heads_star_as_the_main_ruleset() {
+  sandbox
+  ruleset_by_hand_including '"refs/heads/*"'
+  flow >/dev/null
+  assert_eq "$(jq length "$FAKE_STATE/rulesets.json")" "1"
+}
+
+test_rerun_takes_a_ruleset_on_refs_heads_double_star_as_the_main_ruleset() {
+  sandbox
+  ruleset_by_hand_including '"refs/heads/**"'
+  flow >/dev/null
+  assert_eq "$(jq length "$FAKE_STATE/rulesets.json")" "1"
+}
+
+test_flow_lists_the_rulesets_page_by_page() {
+  sandbox
+  flow >/dev/null
+  assert_contains "$(cat "$FAKE_LOG")" "gh api --paginate repos/acme/acme-tool/rulesets "
+}
+
+test_rerun_says_in_the_plan_that_the_main_ruleset_only_evaluates() {
+  sandbox
+  flow >/dev/null
+  evaluate_the_ruleset
+  assert_contains "$(flow)" "  main ruleset: already done (ruleset 777 \"main\" is evaluate, not active; left as is)"
+}
+
+test_rerun_says_at_the_end_that_the_main_ruleset_only_evaluates() {
+  sandbox
+  flow >/dev/null
+  evaluate_the_ruleset
+  assert_contains "$(flow)" "tui_repo: the main ruleset 777 \"main\" is evaluate, not active, so it enforces nothing; it was left as is"
+}
+
+test_rerun_leaves_an_evaluating_main_ruleset_evaluating() {
+  sandbox
+  flow >/dev/null
+  evaluate_the_ruleset
+  flow >/dev/null
+  assert_eq "$(jq -r '.[0].enforcement' "$FAKE_STATE/rulesets.json")" "evaluate"
+}
+
+test_flow_says_nothing_about_enforcement_of_an_active_ruleset() {
+  sandbox
+  refute_contains "$(flow)" "not active"
+}
+
+test_a_missing_tap_repository_is_refused_before_anything_changes() {
+  sandbox
+  set +e
+  output="$(FAKE_TAP_MISSING=1 flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the tap repository acme/homebrew-tap does not exist"
+  assert_eq "$(mutating_calls)" ""
+  refute_exists "$PROJECT"
+}
+
+test_a_failed_tap_probe_stops_before_anything_changes() {
+  sandbox
+  set +e
+  output="$(FAKE_GH_FAIL="repos/acme/homebrew-tap" flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out whether acme/homebrew-tap exists"
+  assert_eq "$(mutating_calls)" ""
+  refute_exists "$PROJECT"
+}
+
 probe_fails_on_a_fresh_run() {
   set +e
   output="$(FAKE_GH_FAIL="$1" flow 2>&1)"
@@ -2036,4 +2120,16 @@ cut_the_metrics_commit() {
   FAKE_STOP_HOW=fail FAKE_STOP_AT='^git commit -q -m Record ' flow >/dev/null 2>&1
   set -e
   assert_file "$SCRATCH/stop/fired"
+}
+
+ruleset_by_hand_including() {
+  set +e
+  FAKE_GH_FAIL="-X POST repos/acme/acme-tool/rulesets" flow >/dev/null 2>&1
+  set -e
+  add_ruleset_by_hand '{"id": 900, "name": "everything", "source_type": "Repository", "source": "acme/acme-tool", "target": "branch", "enforcement": "active", "conditions": {"ref_name": {"include": ['"$1"'], "exclude": []}}, "rules": []}'
+}
+
+evaluate_the_ruleset() {
+  jq 'map(.enforcement = "evaluate")' "$FAKE_STATE/rulesets.json" >"$SCRATCH/rulesets.json"
+  mv "$SCRATCH/rulesets.json" "$FAKE_STATE/rulesets.json"
 }

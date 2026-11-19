@@ -116,7 +116,7 @@ flow_asking() {
     PROJECTS_DIR="$SCRATCH/projects" \
     FAKE_REMOTES="$SCRATCH/remotes" \
     CHROME="${CHROME:-$SCRATCH/bin/chrome}" \
-    TUI_REPO_SHARED_DENYLIST="$SCRATCH/shared/denylist" \
+    TUI_REPO_SHARED_DENYLIST="${SHARED_DENYLIST:-$SCRATCH/shared/denylist}" \
     TUI_REPO_DESCRIPTION="${TUI_REPO_DESCRIPTION:-Keeps the acme fleet in line}" \
     TUI_REPO_TAP="${TAP:-acme/homebrew-tap}" \
     TMPDIR="$SCRATCH/tmp" \
