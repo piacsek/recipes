@@ -1,6 +1,6 @@
 use std::path::Path;
 
-const SEAMS: &[&str] = &[];
+const SEAMS: &[&str] = &["check", "check_released"];
 
 const KINDS: &[&str] = &["fn", "struct", "enum", "const", "static", "trait", "type"];
 

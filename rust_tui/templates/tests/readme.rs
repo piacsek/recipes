@@ -51,6 +51,11 @@ fn the_readme_usage_shows_the_help_flag() {
 }
 
 #[test]
+fn the_readme_usage_shows_the_changelog_subcommand() {
+    assert!(README.contains("\n{{name}} changelog"));
+}
+
+#[test]
 fn the_readme_builds_from_source_at_the_newest_release() {
     assert!(README.contains(
         "\ncargo install --git https://github.com/{{owner}}/{{name}} --branch stable --locked\n"

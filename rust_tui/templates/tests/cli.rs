@@ -117,7 +117,26 @@ fn a_non_utf8_argument_prints_the_usage_on_stderr() {
     assert_eq!(stderr(&{{snake}}_with_bytes(b"\xff")), USAGE);
 }
 
-const USAGE: &str = "{{name}}: {{description}}\n\nusage: {{name}} [--help | --version]\n";
+#[test]
+fn changelog_prints_the_bundled_changelog_on_stdout() {
+    assert_eq!(
+        stdout(&{{snake}}(&["changelog"])),
+        include_str!("../CHANGELOG.md")
+    );
+}
+
+#[test]
+fn changelog_exits_zero() {
+    assert!({{snake}}(&["changelog"]).status.success());
+}
+
+#[test]
+fn changelog_writes_nothing_on_stderr() {
+    assert!({{snake}}(&["changelog"]).stderr.is_empty());
+}
+
+const USAGE: &str =
+    "{{name}}: {{description}}\n\nusage: {{name}} [--help | --version | changelog]\n";
 
 fn version_line() -> String {
     format!("{{name}} {}\n", env!("CARGO_PKG_VERSION"))

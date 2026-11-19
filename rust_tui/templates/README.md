@@ -27,6 +27,7 @@ nix --extra-experimental-features 'nix-command flakes' profile install github:{{
 ```sh
 {{name}} --version   # or -V, or version
 {{name}} --help      # or -h, or help
+{{name}} changelog   # what each release changed
 ```
 
 ## Development

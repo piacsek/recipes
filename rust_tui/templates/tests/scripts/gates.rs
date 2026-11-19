@@ -31,7 +31,7 @@ fn gates_on_a_branch_the_script_tests_do_not_read_run_every_other_test_target() 
     let output = repository_gates(dir.path(), None);
 
     assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(calls(dir.path()).len(), 4);
+    assert_eq!(calls(dir.path()).len(), 5);
     assert_eq!(calls(dir.path())[0], "scrub-check.sh ");
     assert_eq!(calls(dir.path())[1], "cargo fmt --check");
     assert_eq!(
@@ -40,8 +40,9 @@ fn gates_on_a_branch_the_script_tests_do_not_read_run_every_other_test_target() 
     );
     assert_eq!(
         calls(dir.path())[3],
-        "cargo test --bins --test cli --test plans --test prs"
+        "cargo test --lib --bins --test cli --test plans --test prs"
     );
+    assert_eq!(calls(dir.path())[4], "cargo test --doc");
 }
 
 #[test]

@@ -40,11 +40,11 @@ speed-up, when its pipeline went from about 3 min 20 s to 37 s:
   `scripts/flake-ok.sh` and passes only when the build succeeded, or was skipped because `paths`
   succeeded and said `false`. A failed or cancelled leg fails it, and so does a run cancelled
   before the build. The inputs are the one list in `scripts/flake-inputs.sh`: `src/`,
-  `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `flake.nix`, `flake.lock`, `ci.yml` and the
-  three flake scripts; `tests/scripts/flake_inputs.rs` fails while a path `flake.nix` names is
+  `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, `rust-toolchain.toml`, `flake.nix`, `flake.lock`,
+  `ci.yml` and the three flake scripts; `tests/scripts/flake_inputs.rs` fails while a path `flake.nix` names is
   missing from it, or while `flake.nix` names `./.` anywhere but the fileset's `root` or builds a
-  path with `+ "/…"`. `CHANGELOG.md` is not an input: `main` carries none and the binary bundles
-  none. The paths travel NUL-separated (`git diff -z`, `grep -z`), so a name git would quote
+  path with `+ "/…"`. `CHANGELOG.md` is an input because the binary bundles it (the
+  `changelog` subcommand). The paths travel NUL-separated (`git diff -z`, `grep -z`), so a name git would quote
   still matches. A failure to decide (no base, a base the shallow checkout lacks, a failing `git`
   or `grep`, a failed `paths` job) builds, never skips, and `paths` logs the reason on stderr.
   Why not simpler: a workflow-level `paths:` filter leaves a required check pending forever when
@@ -72,13 +72,15 @@ speed-up, when its pipeline went from about 3 min 20 s to 37 s:
 - **Pins.** Every action stays pinned to a commit SHA with the tag in a trailing comment (see
   Releasing internals below for how to bump one).
 - **`main` is protected by a ruleset** (`main`, id {{ruleset_id}}, Settings → Rules): a pull request,
-  the required status check `check` with the branch up to date with `main` before it merges
-  (`strict_required_status_checks_policy: true`), linear history, squash as the only merge
-  method, no force-push or deletion, and no bypass for anyone. `audit`, `version` and `flake-ok`
-  report on every pull request but are not required: adding them is the owner's step by hand,
-  outside this repository, once each reports on `main` (a required check that never reports
-  blocks every merge, and a `pull_request_target` workflow cannot report on the pull request
-  that adds it). Which checks the ruleset requires now:
+  the required status checks `check` and `audit` with the branch up to date with `main` before
+  it merges (`strict_required_status_checks_policy: true`), linear history, squash as the only
+  merge method, no force-push or deletion, and no bypass for anyone. `version` is required once
+  it reports on `main`: rerunning `tui_repo` after the phase 0 merge adds it, since a required
+  check that never reports blocks every merge and a `pull_request_target` workflow cannot report
+  on the pull request that adds it. `tui_repo` only ever adds `check`, `audit` or `version` to
+  this ruleset; it never removes or reorders a rule. `flake-ok` reports on every pull request but
+  is not required: adding it is the owner's step by hand, outside this repository. Which checks
+  the ruleset requires now:
 
   ```bash
   gh api repos/{{owner}}/{{name}}/rulesets/{{ruleset_id}} --jq '.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context'
@@ -88,7 +90,7 @@ speed-up, when its pipeline went from about 3 min 20 s to 37 s:
   the rename's own pull request included; once `version` is required, renaming it lets the
   rename's own pull request merge (the copy on `main` still reports the old name) and then blocks
   every later one until the ruleset names the new job; an advisory with no fixed version does the
-  same through `audit` once it is required. Disable the ruleset to get out
+  same through `audit`. Disable the ruleset to get out
   (`gh api -X PUT repos/<owner>/<repo>/rulesets/<id> -f enforcement=disabled`), fix, and enable it
   again. The up-to-date rule exists because every merge to `main` is released unattended and the
   release run only builds, so a pull request's green CI must be a test of exactly what `main`
@@ -286,7 +288,7 @@ Each case is a test in `tests/scripts/`:
 | `fragments.sh` `last_tag` | prints nothing and succeeds | `next_version.rs`, `release_tag.rs` |
 | `fragments.sh` `released_tree` | the empty tree: every fragment is pending, none was released | `next_version.rs`, `version_check.rs` |
 | `next-version.sh` | bumps from 0.0.0 | `next_version.rs` |
-| `release-commit.sh` | the version must be above 0.0.0; `CHANGELOG.md` is the new section alone | `release_commit.rs` |
+| `release-commit.sh` | the version must be above 0.0.0; `CHANGELOG.md` is the `# Changelog` heading and the new section alone, whatever `main` holds | `release_commit.rs`, `release_commit_first.rs` |
 | `release-tag.sh` | no release to resume, so no `gh` call: tags what is pending, or nothing | `release_tag.rs` |
 | `version-check.sh` | no refusal for the missing tag; repeats are checked against nothing released | `version_check.rs` |
 | `release-unfinished.sh`, `releases.sh` | answer `missing` for a release that does not exist | `release_unfinished.rs` |
@@ -332,7 +334,8 @@ what to do instead, when:
   `_` and `-`), or a `name = "{{name}}"` line is not right after a `[[package]]` line and right
   before its `version = "..."` line; the refusal says to regenerate it with cargo
   (`cargo update --workspace`);
-- it changes `CHANGELOG.md` at all (`main` carries none; only a release commit writes one);
+- it changes `CHANGELOG.md` at all (`main` holds only its `# Changelog` heading; only a release
+  commit writes a section);
 - it edits, deletes or renames a file under `changes/`, or renames a file into it;
 - a fragment it adds is not a direct child `changes/<name>.md`, its name is already on the tip of
   `main` (a branch behind `main` re-adding a fragment `main` gained later; it does not count as
@@ -482,5 +485,7 @@ Steps only the owner takes, by hand, outside this repository:
 - Before merging the pull request that adds `release.yml`: set `TAP_TOKEN` (see the `tap` job
   above). That merge starts the first release run, and without the secret its `tap` job fails
   (a rerun once the secret is set writes `Formula/{{name}}.rb`).
-- After that merge, once `audit`, `version` and `flake-ok` each report on `main`: add the ones
-  wanted to the ruleset's required checks (see the ruleset bullet under CI).
+- After that merge: rerun `tui_repo {{name}}`, which adds `version` to the ruleset's required
+  checks (`check` and `audit` are required from the start) and changes nothing else that is
+  already set up. Requiring `flake-ok` stays a choice made by hand (see the ruleset bullet under
+  CI).

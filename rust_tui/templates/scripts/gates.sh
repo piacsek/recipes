@@ -22,7 +22,8 @@ if [ -z "${CI:-}" ] && reason="$(scripts/script-tests-skippable.sh)"; then
     [ "$name" = scripts ] || targets+=(--test "$name")
   done
   echo "==> skipping the script tests: $reason; CI runs them" >&2
-  step cargo test --bins ${targets[@]+"${targets[@]}"}
+  step cargo test --lib --bins ${targets[@]+"${targets[@]}"}
+  step cargo test --doc
 else
   step cargo test
 fi

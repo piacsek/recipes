@@ -13,9 +13,9 @@ Homebrew formula and moves a `stable` branch for the Nix flake. The binary itsel
 
 Checked by `tui_repo` before it rendered this branch:
 
-- `main` holds only the bootstrap commit: `README.md`, `LICENSE` (MIT) and a `ci.yml` whose
-  `check` job only echoes.
-- The `main` ruleset (id {{ruleset_id}}) exists.
+- `main` holds only the bootstrap commit: `README.md`, `LICENSE` (MIT), a `CHANGELOG.md` of its
+  `# Changelog` heading alone and a `ci.yml` whose `check` job only echoes.
+- The `main` ruleset (id {{ruleset_id}}) exists and requires `check` and `audit`.
 - `~/.config/{{name}}-dev/denylist` exists on the machine that ran `tui_repo`, so the scrub check
   ran from the first ship of this branch.
 
@@ -23,14 +23,20 @@ Checked by `tui_repo` before it rendered this branch:
 
 - Same toolchain (1.98.1, edition 2024), lints and release profile as conveyor.
 - The binary answers `--version`, `-V`, `version` (prints `{{name}} <version>`) and `--help`, `-h`,
-  `help` (prints the usage) on stdout with exit 0. Anything else, no argument included, prints the
+  `help` (prints the usage) and `changelog` (prints the bundled `CHANGELOG.md`) on stdout with
+  exit 0. Anything else, no argument included, prints the
   usage on stderr and exits 1. No dependency; `tempfile` and `toml` are dev-dependencies the tests
   use.
 - Rules that start at a later phase in conveyor apply from phase 0 here. Sweeps stay at multiples of
   5; the first one opens phase 5.
-- `main` carries no `CHANGELOG.md`. The release commit, which lives only on its tag, writes it; the
-  binary does not bundle it, so the flake does not read it. This keeps the version check passing on
-  this pull request, since that check refuses any change to `CHANGELOG.md`.
+- `main` carries a `CHANGELOG.md` of its `# Changelog` heading alone, from the bootstrap commit,
+  as conveyor's `main` carries one frozen at its last hand-made entry. Each release commit, which
+  lives only on its tag, writes the sections. The binary bundles the file, so the flake reads it.
+  This pull request leaves it as `main` has it, so the version check, which refuses any change to
+  `CHANGELOG.md`, passes.
+- The changelog rules come from conveyor (`src/changelog.rs`, `tests/changelog.rs`) with the
+  calendar check written out instead of the `chrono` dependency, and without the assertion that
+  tags exist, since before the first release none do.
 
 ## The first release, from zero tags
 
@@ -92,13 +98,12 @@ every `v*` tag before running the scripts, so only a local run can see that stat
 - `version.yml` runs on `pull_request_target`, so it runs as `main` holds it and does not run on
   this pull request, which adds it. Its proof here is `scripts/version-check.sh origin/main HEAD`
   run locally before the pull request is marked ready.
-- Not in conveyor's form: `gates.sh` runs no tmux e2e tests and, when it skips the script tests,
-  runs `cargo test --bins` (there is no library target); `tests/dead_code.rs` allows
+- Not in conveyor's form: `gates.sh` runs no tmux e2e tests; `tests/dead_code.rs` allows
   `dead_code` nowhere, since there is no `tests/support/` module; the `check` job runs
   `cargo test --locked` without `--include-ignored`.
 - Owner steps, outside this repository: before merging, set `TAP_TOKEN` (the merge starts the
-  first release run, whose `tap` job fails without it); after merging, add `audit`, `version` and
-  `flake-ok` to the ruleset's required checks once each reports on `main`.
+  first release run, whose `tap` job fails without it); after merging, rerun `tui_repo {{name}}`,
+  which adds `version` to the ruleset's required checks.
 - Review: none. A script rendered a template that was reviewed where it came from; no agent took
   part in this phase.
 

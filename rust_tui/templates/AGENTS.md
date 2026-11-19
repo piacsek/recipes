@@ -42,9 +42,12 @@ The layout names what each file or directory is for; read its functions from the
 rules from the `AGENTS.md` of its directory.
 
 ```
-src/main.rs      the whole binary: `--version`/`-V`/`version`, `--help`/`-h`/`help`, the usage on anything else
+src/main.rs      the binary: `--version`/`-V`/`version`, `--help`/`-h`/`help`, `changelog`, the usage on anything else
+src/lib.rs                    the library the binary and the tests share; today only `changelog`
+src/changelog.rs              the bundled CHANGELOG.md and the rules a release entry must meet
+CHANGELOG.md                  only its `# Changelog` heading on `main`; each release commit writes its sections
 rust-toolchain.toml           the one Rust version (rustfmt and clippy with it) that local gates and CI run; see Development
-flake.nix, flake.lock         the Nix flake: the binary built from `Cargo.toml`, `Cargo.lock` and `src/` with the Rust `rust-toolchain.toml` names, through the locked `rust-overlay`; feeds the binary
+flake.nix, flake.lock         the Nix flake: the binary built from `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md` and `src/` with the Rust `rust-toolchain.toml` names, through the locked `rust-overlay`; feeds the binary
 scripts/gates.sh              the quality gates; fails loudly, never pipe it through tail
 scripts/scrub-check.sh        denylist grep over what a commit would take (see "This repository is public")
 scripts/dev-install.sh        release build symlinked as ~/.local/bin/{{name}}-dev
@@ -106,6 +109,10 @@ next to the code; read the one for a directory before changing anything in it.
 - **`--help`/`-h`/`help` and `--version`/`-V`/`version`** print to stdout and exit 0; anything
   else, no argument included, prints the usage to stderr and exits 1. The Homebrew formula's
   `test` block and the `flake` and `stable-build` jobs rely on both.
+- **`changelog`** prints the bundled `CHANGELOG.md` to stdout and exits 0: the heading alone in a
+  build from `main`, every release in a release build. `tests/changelog.rs` holds the rules a
+  release entry must meet, and `the_changelog_has_a_real_entry_for_the_crate_version` checks that a
+  release commit's file has the entry of its own version.
 
 ## Known limits
 
@@ -187,7 +194,7 @@ nearest the code the guideline is about.
      post the review on the PR.
   4. The plan file's `## Outcome` and `## Hurdles` are filled, its `plans/metrics.md` row
      holds what is known by now (see "Time and tokens"), and, when the branch feeds the binary,
-     its fragment `changes/<branch>.md` is on it (no version bump, no `CHANGELOG.md`). Re-read
+     its fragment `changes/<branch>.md` is on it (no version bump, no `CHANGELOG.md` edit). Re-read
      the PR title and body, fix what went stale, `gh pr ready`, wait for CI green.
   5. Squash-merge, the only method `main` allows. Watch the `release` run the merge starts to
      green; with a fragment, check the release holds the six assets and the tap formula names
@@ -303,7 +310,7 @@ nearest the code the guideline is about.
     of findings rather than one per finding: the review-round exception to "one commit per
     task". Each fix that touches `src/` still starts from a failing test.
 - **Merging and releasing.** Squash-merge the phase PR into `main` when CI is green, then
-  watch the `release` run the merge starts (see Releasing): no bump, no `CHANGELOG.md`, no tag
+  watch the `release` run the merge starts (see Releasing): no bump, no `CHANGELOG.md` edit, no tag
   by hand. Squash is the only merge method the repository and the `main` ruleset allow (see
   `.github/AGENTS.md`). The squash commit on `main` takes GitHub's default: the pull request
   title followed by `(#N)` (a pull request of a single commit gets that commit's subject
@@ -377,8 +384,8 @@ of a warm test run) when `scripts/script-tests-skippable.sh` finds nothing betwe
 base with `origin/main` and the working tree, untracked files included, under `scripts/`,
 `tests/scripts/`, `tests/fixtures/`, `.github/`, `changes/`, or in `Cargo.toml`, `Cargo.lock`,
 `CHANGELOG.md` or `flake.nix`: the paths those tests read from this repository. It then runs
-`cargo test --bins` with a `--test` for every other target it finds as `tests/*.rs` or
-`tests/*/main.rs`, and prints `==> skipping the script tests: <reason>; CI runs them`. No
+`cargo test --lib --bins` with a `--test` for every other target it finds as `tests/*.rs` or
+`tests/*/main.rs`, then `cargo test --doc`, and prints `==> skipping the script tests: <reason>; CI runs them`. No
 repository, no `origin/main` or no merge base runs everything. The skip is safe because the
 `check` job of `ci.yml` calls `cargo test --locked` itself, not `gates.sh`, and `check` is
 required to merge into `main`. A script test that starts reading another path of this
@@ -418,7 +425,8 @@ included, is outside `tests/`, `docs/`, `plans/`, `scripts/`, `changes/`, `.gith
 `.claude/`, an `AGENTS.md` at any depth (`src/` included), `PLAN.md`, `README.md`, `LICENSE`
 and `.gitignore`. That list lives in `scripts/feeds-binary.sh`, the one definition of "feeds
 the binary", which `dev-install-skippable.sh` calls. Everything else counts as feeding the
-binary (`src/`, `Cargo.toml`, `Cargo.lock`, any path nobody listed), and a missing or dangling
+binary (`src/`, `Cargo.toml`, `Cargo.lock`, the bundled `CHANGELOG.md`, any path nobody
+listed), and a missing or dangling
 `{{name}}-dev`, or no `origin/main`, installs too. So a branch of docs, tests, scripts or CI
 never takes `{{name}}-dev` over, and `{{name}}-dev` then stays the other worktree's build, not
 this branch's. Once `{{name}}-dev` is this worktree's build every ship runs `dev-install.sh`:
@@ -429,9 +437,10 @@ directories into the binary means taking that directory off the list in the scri
 ## Releasing
 
 The pipeline picks the version; a pull request never does. `main` carries the constant
-`version = "0.0.0"` in `Cargo.toml` and no `CHANGELOG.md`; a pull request edits neither. The
-version lives in the `v*` tags, and each release's `CHANGELOG.md` lives on its release commit,
-which only its tag reaches.
+`version = "0.0.0"` in `Cargo.toml` and a `CHANGELOG.md` that holds only its `# Changelog`
+heading; a pull request edits neither. The version lives in the `v*` tags, and each release's
+`CHANGELOG.md` lives on its release commit, which only its tag reaches, so a build from `main`
+prints the heading alone for `{{name}} changelog` and a release build prints every release.
 
 **The first release starts from zero tags.** No `vX.Y.Z` tag means "never released": the
 scripts count from 0.0.0 and every fragment on `main` is pending: a `feat` fragment gives
@@ -471,8 +480,8 @@ one that sets the version in `Cargo.toml` or `Cargo.lock` or leaves either in a 
 release cannot rewrite, adds or changes `CHANGELOG.md`, edits, deletes or renames a fragment,
 adds a malformed or repeated one, changes the Rust channel of `rust-toolchain.toml` without
 moving the locked `rust-overlay` of `flake.lock`, or feeds the binary without one, naming the
-file and what to do instead. It is not a required check yet: adding it to the ruleset is the
-owner's step (`.github/AGENTS.md`). The full list, how it reads a pull request without running
+file and what to do instead. It is required once `main` holds it: rerunning `tui_repo` after the
+phase 0 merge adds it to the ruleset (`.github/AGENTS.md`). The full list, how it reads a pull request without running
 it, the release run, and what to do when a run fails or a tag can never build are under
 "Releasing internals" in [`.github/AGENTS.md`](.github/AGENTS.md).
 

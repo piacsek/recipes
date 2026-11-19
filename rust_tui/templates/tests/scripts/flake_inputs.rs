@@ -47,10 +47,10 @@ fn the_scripts_that_decide_the_build_are_inputs() {
 }
 
 #[test]
-fn the_changelog_is_not_an_input() {
-    let output = flake_inputs("CHANGELOG.md\0");
+fn the_bundled_changelog_is_an_input() {
+    let missing = dropped(&["CHANGELOG.md".to_string()]);
 
-    assert_eq!(stdout(&output), "");
+    assert!(missing.is_empty(), "{missing:?}");
 }
 
 #[test]

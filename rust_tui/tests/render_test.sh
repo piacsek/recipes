@@ -17,7 +17,7 @@ test_render_writes_the_description_exactly_into_the_flake() {
 
 test_render_writes_the_description_exactly_into_the_usage() {
   render acme-tool
-  assert_contains "$(cat "$OUT/src/main.rs")" "\"acme-tool: $DESCRIPTION\\n\\nusage: acme-tool [--help | --version]\""
+  assert_contains "$(cat "$OUT/src/main.rs")" "\"acme-tool: $DESCRIPTION\\n\\nusage: acme-tool [--help | --version | changelog]\""
 }
 
 test_render_writes_the_description_exactly_into_the_formula() {
@@ -210,6 +210,11 @@ test_render_still_lists_the_demo_driver_as_waiting() {
 test_render_mentions_the_help_screenshot_in_the_phase_0_plan() {
   render acme-tool
   assert_contains "$(cat "$OUT/plans/phase-0-foundations.md")" "docs/help.png"
+}
+
+test_render_writes_a_changelog_of_its_header_alone() {
+  render acme-tool
+  assert_eq "$(cat "$OUT/CHANGELOG.md")" "# Changelog"
 }
 
 test_render_makes_the_first_release_v0_0_1() {

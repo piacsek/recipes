@@ -36,6 +36,14 @@ fn a_claude_skill_does_not_feed_the_binary() {
     assert_eq!(stdout(&output), "src/.claude/topic.md\n");
 }
 
+#[test]
+fn the_bundled_changelog_feeds_the_binary() {
+    let output = feeds_binary("CHANGELOG.md\n");
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stdout(&output), "CHANGELOG.md\n");
+}
+
 fn feeds_binary(paths: &str) -> Output {
     piped("feeds-binary.sh", paths)
 }
