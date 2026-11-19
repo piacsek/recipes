@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+tool="${0##*/}"
+real="${FAKE_REAL_BIN:?FAKE_REAL_BIN is not set}/$tool"
+if [ -n "${FAKE_STOP_AT:-}" ] && [[ "$tool $*" =~ $FAKE_STOP_AT ]]; then
+  count=0
+  [ ! -f "$FAKE_STOP_DIR/count" ] || count="$(cat "$FAKE_STOP_DIR/count")"
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$FAKE_STOP_DIR/count"
+  if [ "$count" = "${FAKE_STOP_NTH:-1}" ]; then
+    touch "$FAKE_STOP_DIR/fired"
+    [ "$FAKE_STOP_HOW" = interrupt ] || exit 1
+    "$real" "$@" || exit
+    pid="$PPID"
+    top=""
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+      case "$("$FAKE_PS" -o args= -p "$pid")" in *"$FAKE_STOP_TARGET"*) top="$pid" ;; esac
+      pid="$("$FAKE_PS" -o ppid= -p "$pid" | tr -d ' ')"
+    done
+    [ -z "$top" ] || kill -KILL "$top"
+    exit 1
+  fi
+fi
+exec "$real" "$@"

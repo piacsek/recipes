@@ -1,5 +1,3 @@
-SECRET_TERM="zzqx-unlisted-term"
-
 test_flow_creates_the_repository_before_its_settings() {
   sandbox
   flow >/dev/null
@@ -926,11 +924,25 @@ test_a_failed_ruleset_probe_after_the_merge_changes_nothing() {
   merge_phase_0
   : >"$FAKE_LOG"
   set +e
-  output="$(FAKE_GH_FAIL="rulesets/777 --jq" flow 2>&1)"
+  output="$(FAKE_GH_FAIL="required_status_checks" flow 2>&1)"
   status=$?
   set -e
   assert_status "$status" 1
   assert_contains "$output" "could not find out the required checks of the main ruleset"
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_a_failed_probe_of_what_a_ruleset_protects_changes_nothing() {
+  sandbox
+  flow >/dev/null
+  merge_phase_0
+  : >"$FAKE_LOG"
+  set +e
+  output="$(FAKE_GH_FAIL="ref_name" flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "could not find out ruleset 777 of acme/acme-tool"
   assert_eq "$(mutating_calls)" ""
 }
 
@@ -1177,42 +1189,484 @@ test_a_directory_with_a_commit_but_no_origin_is_refused() {
   assert_contains "$output" "is not a clone of acme/acme-tool"
 }
 
-sandbox() {
-  local tool real
-  mkdir -p "$SCRATCH/bin" "$SCRATCH/shared" "$SCRATCH/projects" "$SCRATCH/remotes"
-  for tool in $HARNESS_TOOLS; do
-    real="$(resolve_tool "$tool")"
-    case "$real" in
-      /*) ln -s "$real" "$SCRATCH/bin/$tool" ;;
-      *) fail "the test harness cannot find $tool on PATH" ;;
-    esac
-  done
-  for tool in gh cargo tmux freeze chrome sleep; do
-    ln -s "$FAKES/$tool" "$SCRATCH/bin/$tool"
-  done
-  printf '%s\n' "$SECRET_TERM" >"$SCRATCH/shared/denylist"
-  git config --global url."$SCRATCH/remotes/".insteadOf "git@github.com:"
-  PROJECT="$SCRATCH/projects/acme-tool"
-  FAKE_STATE="$SCRATCH/state"
-  FAKE_LOG="$SCRATCH/fake.log"
-  REMOTE="$SCRATCH/remotes/acme/acme-tool.git"
-  FAKE_NOW="$(date -u +%Y-%m-%d)T10:05:00Z"
-  export FAKE_STATE FAKE_LOG FAKE_NOW
+test_rerun_after_the_denylist_link_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^ln -s '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
 }
 
-flow() {
-  flow_asking --yes </dev/null
+test_rerun_after_the_denylist_link_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^ln -s '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
 }
 
-flow_asking() {
-  PATH="$SCRATCH/bin" \
-    PROJECTS_DIR="$SCRATCH/projects" \
-    FAKE_REMOTES="$SCRATCH/remotes" \
-    CHROME="${CHROME:-$SCRATCH/bin/chrome}" \
-    TUI_REPO_SHARED_DENYLIST="$SCRATCH/shared/denylist" \
-    TUI_REPO_DESCRIPTION="${TUI_REPO_DESCRIPTION:-Keeps the acme fleet in line}" \
-    TUI_REPO_TAP=acme/homebrew-tap \
-    "$TUI_REPO" acme-tool "$@"
+test_rerun_after_the_bootstrap_commit_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git -C .* commit -q -m Bootstrap$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_bootstrap_commit_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git -C .* commit -q -m Bootstrap$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_repository_creation_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^gh repo create '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_repository_creation_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^gh repo create '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_push_of_main_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git -C .* push -q -u origin main$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_push_of_main_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git -C .* push -q -u origin main$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_repository_settings_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^gh api --silent -X PATCH '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_repository_settings_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^gh api --silent -X PATCH '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_token_permissions_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^gh api --silent -X PUT .*/actions/permissions/workflow'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_token_permissions_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^gh api --silent -X PUT .*/actions/permissions/workflow'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_ruleset_creation_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^gh api --silent -X POST .*/rulesets'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_ruleset_creation_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^gh api --silent -X POST .*/rulesets'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_first_label_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^gh label create '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_first_label_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^gh label create '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_worktree_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git -C .* worktree add '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_worktree_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git -C .* worktree add '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_render_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^mv -f .*\.tui_repo-partial '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_render_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^mv -f .*\.tui_repo-partial '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_screenshot_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^chrome .*--screenshot='
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_screenshot_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^chrome .*--screenshot='
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_format_before_the_gates_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^cargo fmt$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_format_before_the_gates_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^cargo fmt$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_gates_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^cargo clippy '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_gates_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^cargo clippy '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_dev_install_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^cargo build --release --locked$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_dev_install_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^cargo build --release --locked$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_staging_of_phase_0_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git add -A$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_staging_of_phase_0_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git add -A$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_phase_0_commit_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git commit -q -m Set up '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_phase_0_commit_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git commit -q -m Set up '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_push_of_phase_0_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git push -q -u origin phase-0-foundations$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_push_of_phase_0_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git push -q -u origin phase-0-foundations$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_pull_request_creation_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^gh pr create '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_pull_request_creation_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^gh pr create '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_pull_request_body_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^gh pr edit '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_pull_request_body_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^gh pr edit '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_metrics_commit_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git commit -q -m Record '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_metrics_commit_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git commit -q -m Record '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_push_of_the_metrics_fails_once_ends_like_an_uninterrupted_run() {
+  stop_once fail '^git push -q -u origin phase-0-foundations$' 2
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_the_push_of_the_metrics_is_interrupted_ends_like_an_uninterrupted_run() {
+  stop_once interrupt '^git push -q -u origin phase-0-foundations$' 2
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_missing_cargo_is_refused_before_anything_is_created() {
+  sandbox
+  rm "$SCRATCH/bin/cargo"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "cargo is missing"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_a_rerun_keeps_a_foreign_partial_file_in_the_worktree() {
+  sandbox
+  interrupt_render_after 1 3
+  printf 'mine\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/notes.tui_repo-partial"
+  set +e
+  flow >/dev/null 2>&1
+  set -e
+  assert_file "$PROJECT/.claude/worktrees/phase-0-foundations/notes.tui_repo-partial"
+}
+
+test_a_foreign_partial_file_in_the_worktree_stops_the_render() {
+  sandbox
+  interrupt_render_after 1 3
+  printf 'mine\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/notes.tui_repo-partial"
+  set +e
+  output="$(flow 2>&1)"
+  set -e
+  assert_contains "$output" "the phase 0 worktree holds changes the render would not write: notes.tui_repo-partial"
+}
+
+test_rerun_after_an_empty_screenshot_ships_a_png() {
+  sandbox
+  set +e
+  FAKE_CHROME_FAIL=1 flow >/dev/null 2>&1
+  set -e
+  mkdir -p "$PROJECT/.claude/worktrees/phase-0-foundations/docs"
+  : >"$PROJECT/.claude/worktrees/phase-0-foundations/docs/help.png"
+  flow >/dev/null
+  assert_eq "$(shipped_png_signature)" "89504e470d0a1a0a"
+}
+
+test_rerun_after_a_screenshot_that_is_no_png_ships_a_png() {
+  sandbox
+  set +e
+  FAKE_CHROME_FAIL=1 flow >/dev/null 2>&1
+  set -e
+  mkdir -p "$PROJECT/.claude/worktrees/phase-0-foundations/docs"
+  printf 'error page\n' >"$PROJECT/.claude/worktrees/phase-0-foundations/docs/help.png"
+  flow >/dev/null
+  assert_eq "$(shipped_png_signature)" "89504e470d0a1a0a"
+}
+
+test_a_screenshot_that_is_no_png_stops_the_run() {
+  sandbox
+  set +e
+  output="$(FAKE_CHROME_BROKEN=1 flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "scripts/screenshots.sh wrote no PNG to docs/help.png"
+}
+
+test_rerun_leaves_a_ruleset_renamed_by_hand_as_the_only_one() {
+  sandbox
+  flow >/dev/null
+  jq 'map(.name = "protect main")' "$FAKE_STATE/rulesets.json" >"$SCRATCH/rulesets.json"
+  mv "$SCRATCH/rulesets.json" "$FAKE_STATE/rulesets.json"
+  flow >/dev/null
+  assert_eq "$(jq length "$FAKE_STATE/rulesets.json")" "1"
+}
+
+test_rerun_creates_its_own_ruleset_next_to_one_for_another_branch() {
+  sandbox
+  flow >/dev/null
+  jq 'map(.conditions.ref_name.include = ["refs/heads/release"])' "$FAKE_STATE/rulesets.json" >"$SCRATCH/rulesets.json"
+  mv "$SCRATCH/rulesets.json" "$FAKE_STATE/rulesets.json"
+  FAKE_RULESET_ID=778 flow >/dev/null
+  assert_eq "$(jq length "$FAKE_STATE/rulesets.json")" "2"
+}
+
+test_an_organisation_ruleset_named_main_is_left_alone() {
+  sandbox
+  set +e
+  FAKE_GH_FAIL="-X POST repos/acme/acme-tool/rulesets" flow >/dev/null 2>&1
+  set -e
+  add_ruleset_by_hand '{"id": 900, "name": "main", "source_type": "Organization", "source": "acme", "target": "branch", "enforcement": "active", "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}}, "rules": []}'
+  flow >/dev/null
+  assert_eq "$(jq '[.[] | select(.id == 900)][0].rules | length' "$FAKE_STATE/rulesets.json")" "0"
+  assert_eq "$(jq '[.[] | select(.source_type == "Repository")] | length' "$FAKE_STATE/rulesets.json")" "1"
+}
+
+test_two_rulesets_protecting_main_stop_the_run_before_any_change() {
+  sandbox
+  set +e
+  FAKE_GH_FAIL="-X POST repos/acme/acme-tool/rulesets" flow >/dev/null 2>&1
+  set -e
+  add_ruleset_by_hand '{"id": 801, "name": "main", "source_type": "Repository", "source": "acme/acme-tool", "target": "branch", "enforcement": "active", "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}}, "rules": []}'
+  add_ruleset_by_hand '{"id": 802, "name": "main copy", "source_type": "Repository", "source": "acme/acme-tool", "target": "branch", "enforcement": "active", "conditions": {"ref_name": {"include": ["refs/heads/main"], "exclude": []}}, "rules": []}'
+  : >"$FAKE_LOG"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "801 \"main\", 802 \"main copy\""
+  assert_eq "$(mutating_calls)" ""
+}
+
+test_flow_refuses_an_empty_shared_denylist_before_anything_is_created() {
+  sandbox
+  : >"$SCRATCH/shared/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the shared denylist $SCRATCH/shared/denylist is not a readable, non-empty file"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_flow_refuses_an_unreadable_shared_denylist_before_anything_is_created() {
+  sandbox
+  chmod 000 "$SCRATCH/shared/denylist"
+  set +e
+  output="$(flow 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "the shared denylist $SCRATCH/shared/denylist is not a readable, non-empty file"
+  refute_exists "$FAKE_STATE/repo.json"
+}
+
+test_pull_request_diagram_merges_once_the_required_checks_pass() {
+  sandbox
+  flow >/dev/null
+  assert_contains "$(pr_body)" "-->|\"the required checks pass\"| merge"
+}
+
+test_pull_request_body_lists_every_form_the_binary_answers() {
+  sandbox
+  flow >/dev/null
+  assert_contains "$(pr_body)" "The binary answers \`--help\`, \`-h\`, \`help\`, \`--version\`, \`-V\`, \`version\` and \`changelog\`, and nothing else yet"
+}
+
+test_a_pushed_branch_without_a_pull_request_or_local_branch_says_how_to_open_it() {
+  sandbox
+  set +e
+  FAKE_GH_FAIL="pr create" flow >/dev/null 2>&1
+  set -e
+  git -C "$PROJECT" worktree remove --force "$PROJECT/.claude/worktrees/phase-0-foundations"
+  git -C "$PROJECT" branch -q -D phase-0-foundations
+  assert_contains "$(flow 2>&1)" "gh pr create --repo acme/acme-tool --head phase-0-foundations --draft"
+}
+
+test_flow_names_the_tap_owner_in_the_token_link_for_another_owners_tap() {
+  sandbox
+  assert_contains "$(TAP=acme-labs/homebrew-tap flow | tail -n 6)" "new?name=acme-tool-tap&contents=write&target_name=acme-labs"
+}
+
+test_flow_keeps_the_tap_token_block_at_six_lines_for_another_owners_tap() {
+  sandbox
+  assert_eq "$(TAP=acme-labs/homebrew-tap flow | tail -n 6 | head -n 1)" "$(tap_block | head -n 1)"
+}
+
+test_a_bootstrap_cut_over_new_year_is_finished() {
+  sandbox
+  half_bootstrap 5
+  sed "s/(c) $(date +%Y) /(c) $(($(date +%Y) - 1)) /" "$PROJECT/LICENSE" >"$SCRATCH/LICENSE"
+  mv "$SCRATCH/LICENSE" "$PROJECT/LICENSE"
+  set +e
+  flow >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+  assert_contains "$(remote_git show main:LICENSE)" "Copyright (c) $(($(date +%Y) - 1)) Acme Author"
+}
+
+test_flow_starts_the_metrics_at_the_first_commit_without_a_reflog() {
+  sandbox
+  git config --global core.logAllRefUpdates false
+  flow >/dev/null
+  assert_contains "$(remote_git show phase-0-foundations:plans/metrics.md)" "| 0 | #1 | $(TZ=UTC remote_git log -1 --format=%cd --date=format-local:'%Y-%m-%d %H:%M:%SZ' main) |"
 }
 
 probe_fails_on_a_fresh_run() {
@@ -1247,10 +1701,6 @@ assert_before() {
   [ -n "$first" ] || fail "no call matching [$1]"
   [ -n "$second" ] || fail "no call matching [$2]"
   [ "$first" -lt "$second" ] || fail "[$1] (line $first) is not before [$2] (line $second)"
-}
-
-remote_git() {
-  git --git-dir "$REMOTE" "$@"
 }
 
 phase_0_commit() {
@@ -1374,4 +1824,13 @@ half_bootstrap() {
   cp "$reference/.github/workflows/ci.yml" "$PROJECT/.github/workflows/ci.yml"
   [ "$1" -ge 8 ] || return 0
   git -C "$PROJECT" add -A
+}
+
+add_ruleset_by_hand() {
+  jq --argjson r "$1" '. + [$r]' "$FAKE_STATE/rulesets.json" >"$SCRATCH/rulesets.json" 2>/dev/null || printf '[%s]\n' "$1" >"$SCRATCH/rulesets.json"
+  mv "$SCRATCH/rulesets.json" "$FAKE_STATE/rulesets.json"
+}
+
+shipped_png_signature() {
+  remote_git show "$(phase_0_commit):docs/help.png" | od -An -tx1 -N8 | tr -d ' \n'
 }

@@ -62,17 +62,17 @@ test_render_links_the_pr_review_skill_in_the_recipe_authors_dotfiles() {
 
 test_render_says_in_agents_md_that_the_binary_prints_its_changelog() {
   render acme-tool
-  assert_contains "$(flat "$OUT/AGENTS.md")" "Until then the binary only answers \`--help\`, \`--version\` and \`changelog\`."
+  assert_contains "$(flat "$OUT/AGENTS.md")" "Until then the binary only answers \`--help\`, \`-h\`, \`help\`, \`--version\`, \`-V\`, \`version\` and \`changelog\`."
 }
 
 test_render_says_in_the_plan_summary_that_the_binary_prints_its_changelog() {
   render acme-tool
-  assert_contains "$(flat "$OUT/plans/phase-0-foundations.md")" "The binary itself only answers \`--help\`, \`--version\` and \`changelog\`;"
+  assert_contains "$(flat "$OUT/plans/phase-0-foundations.md")" "The binary itself only answers \`--help\`, \`-h\`, \`help\`, \`--version\`, \`-V\`, \`version\` and \`changelog\`;"
 }
 
 test_render_says_in_the_plan_facts_that_the_binary_prints_its_changelog() {
   render acme-tool
-  assert_contains "$(flat "$OUT/plans/phase-0-foundations.md")" "The binary answers \`--help\`, \`--version\` and \`changelog\` and nothing else."
+  assert_contains "$(flat "$OUT/plans/phase-0-foundations.md")" "The binary answers \`--help\`, \`-h\`, \`help\`, \`--version\`, \`-V\`, \`version\` and \`changelog\` and nothing else."
 }
 
 test_render_says_in_the_fragment_that_the_binary_prints_its_changelog() {
@@ -322,6 +322,65 @@ test_render_makes_the_first_release_v0_0_1() {
   assert_eq "$("$OUT/scripts/next-version.sh")" "0.0.1"
 }
 
+test_a_name_equal_to_the_locked_package_libc_is_refused() {
+  set +e
+  output="$(render_env libc "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "a package of that name is in the template's Cargo.lock"
+}
+
+test_a_name_equal_to_the_locked_package_syn_is_refused() {
+  set +e
+  output="$(render_env syn "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "a package of that name is in the template's Cargo.lock"
+}
+
+test_a_name_that_only_contains_a_locked_package_renders() {
+  set +e
+  render_env acme-syn "$DESCRIPTION" "$TUI_REPO" --render-only "$SCRATCH/out" >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_status "$status" 0
+}
+
+test_a_description_with_a_less_than_sign_is_refused() {
+  set +e
+  output="$(render_env acme-tool "Keeps the acme fleet <b>in</b> line" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "description: no < or >"
+}
+
+test_a_description_with_a_greater_than_sign_is_refused() {
+  set +e
+  output="$(render_env acme-tool "Keeps the acme fleet in line -> always" "$TUI_REPO" --render-only "$SCRATCH/out" 2>&1)"
+  status=$?
+  set -e
+  assert_status "$status" 1
+  assert_contains "$output" "description: no < or >"
+}
+
+test_render_names_the_tap_the_tap_token_writes_to() {
+  TAP=acme-labs/homebrew-tools render acme-tool
+  assert_contains "$(flat "$OUT/.github/AGENTS.md")" "contents:write on acme-labs/homebrew-tools;"
+}
+
+test_render_claims_no_owner_for_conveyor() {
+  render acme-tool
+  refute_contains "$(flat "$OUT/.github/AGENTS.md")" "by the same owner"
+}
+
+test_render_credits_conveyor_to_the_recipes_author() {
+  render acme-tool
+  assert_contains "$(flat "$OUT/.github/AGENTS.md")" "conveyor, a sibling project by the recipe's author;"
+}
+
 render() {
   OUT="$SCRATCH/out"
   render_env "$1" "$DESCRIPTION" "$TUI_REPO" --render-only "$OUT" >/dev/null
@@ -333,7 +392,7 @@ render_env() {
   TUI_REPO_NAME="$name" \
     TUI_REPO_DESCRIPTION="$description" \
     TUI_REPO_OWNER=acme \
-    TUI_REPO_TAP=acme/homebrew-tap \
+    TUI_REPO_TAP="${TAP:-acme/homebrew-tap}" \
     TUI_REPO_AUTHOR="Jane Q. O'Neil & Co" \
     TUI_REPO_RULESET_ID=777 \
     FAKE_LOG="$SCRATCH/fake.log" \

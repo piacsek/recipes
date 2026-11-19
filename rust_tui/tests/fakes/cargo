@@ -1,2 +1,5 @@
 #!/usr/bin/env bash
 printf '%s cargo %s\n' "$PWD" "$*" >>"${FAKE_LOG:-/dev/null}"
+if [ "${1:-}" = fmt ] && [ -n "${FAKE_REAL_CARGO:-}" ]; then
+  PATH="$FAKE_REAL_PATH" exec "$FAKE_REAL_CARGO" "$@"
+fi

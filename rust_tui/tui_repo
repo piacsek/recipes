@@ -72,7 +72,7 @@ ask() {
   printf -v "$1" '%s' "$answer"
 }
 
-reserved_names="as async await break const continue crate dyn else enum extern false fn for gen if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield try union test std core alloc proc-macro build deps examples incremental con prn aux nul com1 com2 com3 com4 com5 com6 com7 com8 com9 lpt1 lpt2 lpt3 lpt4 lpt5 lpt6 lpt7 lpt8 lpt9 tempfile toml"
+reserved_names="as async await break const continue crate dyn else enum extern false fn for gen if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while abstract become box do final macro override priv typeof unsized virtual yield try union test std core alloc proc-macro build deps examples incremental con prn aux nul com1 com2 com3 com4 com5 com6 com7 com8 com9 lpt1 lpt2 lpt3 lpt4 lpt5 lpt6 lpt7 lpt8 lpt9"
 
 name_problem() {
   local pattern='^[a-z][a-z0-9]*(-[a-z0-9]+)*$' word
@@ -80,8 +80,11 @@ name_problem() {
   [[ $1 =~ $pattern ]] || { echo "name \"$1\": use a lowercase letter first, then lowercase letters, digits and single hyphens, no hyphen at the end"; return; }
   [ "${#1}" -le 64 ] || { echo "name \"$1\": at most 64 characters"; return; }
   for word in $reserved_names; do
-    [ "$1" != "$word" ] || { echo "name \"$1\": reserved (a Rust keyword, a name cargo or Windows refuses, or a dependency of the project)"; return; }
+    [ "$1" != "$word" ] || { echo "name \"$1\": reserved (a Rust keyword, or a name cargo or Windows refuses)"; return; }
   done
+  if sed -n 's/^name = "\(.*\)"$/\1/p' "$templates/Cargo.lock" | grep -vxF '{{name}}' | grep -qxF -- "$1"; then
+    echo "name \"$1\": reserved, a package of that name is in the template's Cargo.lock, and two packages of one name break the release scripts"
+  fi
 }
 
 description_problem() {
@@ -97,6 +100,7 @@ description_problem() {
   case "$d" in *.) echo "description: no full stop at the end (Homebrew's rule; the README adds one)"; return ;; esac
   case "$d" in *'?' | *!) echo "description: no ? or ! at the end (the README adds a full stop)"; return ;; esac
   case "$d" in *' ') echo "description: no space at the end"; return ;; esac
+  case "$d" in *'<'* | *'>'*) echo "description: no < or >, Markdown and the PR body's HTML would read them as a tag"; return ;; esac
   case "$d" in *'"'*) echo "description: no double quote (\"), it ends the string in Cargo.toml, flake.nix, the formula and the Rust sources"; return ;; esac
   case "$d" in *\\*) echo "description: no backslash (\\), it starts an escape in TOML, Nix, Ruby, Rust and the formula's heredoc"; return ;; esac
   case "$d" in *'`'*) echo "description: no backtick (\`), it runs a command in the formula's heredoc"; return ;; esac
@@ -267,6 +271,7 @@ is_clone() {
 }
 
 write_bootstrap() {
+  local year="$bootstrap_year"
   mkdir -p "$1/.github/workflows"
   printf '# %s\n' "$name" >"$1/README.md"
   render "$1" LICENSE
@@ -419,11 +424,20 @@ remote_main() {
 }
 
 load_ruleset() {
+  local id found=""
   [ -z "$known_ruleset" ] || return 0
   known_ruleset=none
   repo_exists || return 0
-  query "the rulesets of $repo" gh api "repos/$repo/rulesets" --jq '[.[] | select(.name == "main") | .id][0] // empty'
-  [ -z "$probe_out" ] || known_ruleset="$probe_out"
+  query "the rulesets of $repo" gh api "repos/$repo/rulesets" --jq ".[] | select(.source_type == \"Repository\" and (.source | ascii_downcase) == \"$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')\" and .target == \"branch\") | .id"
+  for id in $probe_out; do
+    query "ruleset $id of $repo" gh api "repos/$repo/rulesets/$id" --jq 'select(any(.conditions.ref_name.include[]?; . == "~DEFAULT_BRANCH" or . == "refs/heads/main")) | "\(.id) \"\(.name)\""'
+    [ -z "$probe_out" ] || found="$found$probe_out"$'\n'
+  done
+  found="$(printf '%s' "$found" | sed '/^$/d')"
+  [ -n "$found" ] || return 0
+  [ "$(printf '%s\n' "$found" | wc -l | tr -d ' ')" = 1 ] ||
+    die "more than one ruleset of $repo protects main: $(printf '%s\n' "$found" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }'); keep one and rerun"
+  known_ruleset="${found%% *}"
 }
 
 load_missing_checks() {
@@ -685,28 +699,33 @@ fresh_render() {
   ruleset_id="$known_ruleset"
   main_sha="$(git -C "$wt" rev-parse --short origin/main)"
   git -C "$dir" reflog show --format=%ct "refs/heads/$branch" >"$work/reflog"
-  start="$(perl -MPOSIX -e 'print strftime("%Y-%m-%d %H:%M:%SZ", gmtime($ARGV[0]))' "$(tail -n 1 "$work/reflog")")"
+  start="$(tail -n 1 "$work/reflog")"
+  [ -n "$start" ] || start="$(git -C "$dir" log --max-parents=0 -1 --format=%ct "refs/heads/$branch")"
+  [ -n "$start" ] || start="$(date -u +%s)"
+  start="$(perl -MPOSIX -e 'print strftime("%Y-%m-%d %H:%M:%SZ", gmtime($ARGV[0]))' "$start")"
   date="${start%% *}"
   year="${start%%-*}"
   rm -rf "$work/render"
   mkdir "$work/render"
   render "$work/render"
+  cargo fmt --manifest-path "$work/render/Cargo.toml"
 }
 
 compare_render() {
   local entry rel
   render_missing=""
   render_foreign=""
+  (cd "$work/render" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) >"$work/rendered"
   git -C "$wt" status --porcelain -z --untracked-files=all >"$work/status"
   while IFS= read -r -d '' entry; do
     rel="${entry:3}"
-    case "$rel" in docs/help.png | *.tui_repo-partial) continue ;; esac
+    [ "$rel" != docs/help.png ] || continue
+    case "$rel" in *.tui_repo-partial) [ ! -f "$work/render/${rel%.tui_repo-partial}" ] || continue ;; esac
     if [ -f "$work/render/$rel" ] && [ -f "$wt/$rel" ] && cmp -s "$work/render/$rel" "$wt/$rel"; then
       continue
     fi
     render_foreign="$render_foreign $rel"
   done <"$work/status"
-  (cd "$work/render" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) >"$work/rendered"
   while IFS= read -r rel; do
     cmp -s "$work/render/$rel" "$wt/$rel" 2>/dev/null || render_missing="$render_missing$rel"$'\n'
   done <"$work/rendered"
@@ -727,7 +746,9 @@ plan_render() {
 
 do_render() {
   local rel
-  find "$wt" -name '*.tui_repo-partial' -type f -exec rm -f {} +
+  while IFS= read -r rel; do
+    rm -f "$wt/$rel.tui_repo-partial"
+  done <"$work/rendered"
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
     mkdir -p "$(dirname "$wt/$rel")"
@@ -738,17 +759,21 @@ $render_missing
 EOF
 }
 
+help_png_ok() {
+  [ -f "$1" ] && [ -s "$1" ] && [ "$(od -An -tx1 -N8 "$1" | tr -d ' \n')" = 89504e470d0a1a0a ]
+}
+
 plan_screenshot() {
   plan=""
   phase0_active || return 0
   [ "$(ahead)" = 0 ] || return 0
-  [ -f "$wt/docs/help.png" ] || plan="run scripts/screenshots.sh for docs/help.png"
+  help_png_ok "$wt/docs/help.png" || plan="run scripts/screenshots.sh for docs/help.png"
 }
 
 do_screenshot() {
   cd "$wt"
   CHROME="$(find_chrome)" scripts/screenshots.sh docs
-  [ -s docs/help.png ] || die "scripts/screenshots.sh wrote no docs/help.png"
+  help_png_ok docs/help.png || die "scripts/screenshots.sh wrote no PNG to docs/help.png"
 }
 
 plan_ship() {
@@ -786,7 +811,7 @@ Merging it releases v0.0.1 to \`$tap_repo\` and points the \`stable\` branch at 
 
 ## Changes
 
-- The binary answers \`--help\`, \`--version\` and \`changelog\`, and nothing else yet; Phase 1 defines what $name is.
+- The binary answers \`--help\`, \`-h\`, \`help\`, \`--version\`, \`-V\`, \`version\` and \`changelog\`, and nothing else yet; Phase 1 defines what $name is.
 - Gates, the scrub check, ship, CI, the release and \`version\` workflows, the agent guidelines and the plans come from the recipe, renamed for $name.
 - Owner steps: before merging, set the \`TAP_TOKEN\` secret as the \`tui_repo\` run printed; after merging, rerun \`tui_repo $name\`, which adds \`version\` to the required checks.
 
@@ -794,7 +819,7 @@ Merging it releases v0.0.1 to \`$tap_repo\` and points the \`stable\` branch at 
 
 \`\`\`mermaid
 flowchart TD
-  pr["Pull request with a fragment"] -->|"check, audit, version pass"| merge["Squash merge to main"]
+  pr["Pull request with a fragment"] -->|"the required checks pass"| merge["Squash merge to main"]
   merge --> tag["tag"]
   tag -->|"no fragment pending"| idle["Nothing released"]
   tag -->|"vX.Y.Z tag on a release commit"| build["build"]
@@ -871,11 +896,18 @@ missing_tools() {
   command -v cargo >/dev/null || echo "cargo is missing: install Rust with rustup (https://rustup.rs)"
 }
 
+bootstrap_year="$year"
+if [ -f "$dir/LICENSE" ] && [ ! -L "$dir/LICENSE" ]; then
+  license_year="$(sed -n 's/^Copyright (c) \([0-9]\{4\}\) .*/\1/p' "$dir/LICENSE" | head -n 1)"
+  [ -z "$license_year" ] || bootstrap_year="$license_year"
+fi
 if { [ -e "$dir" ] || [ -L "$dir" ]; } && ! is_clone && ! half_bootstrap; then
   die "$dir exists and is not a clone of $repo; move it away or pick another name"
 fi
-if [ ! -e "$link" ] && [ ! -L "$link" ] && [ ! -f "$shared_denylist" ]; then
-  die "the shared denylist $shared_denylist is missing, so $link cannot link to it; create it or set TUI_REPO_SHARED_DENYLIST"
+if [ ! -e "$link" ] && [ ! -L "$link" ]; then
+  [ -e "$shared_denylist" ] || die "the shared denylist $shared_denylist is missing, so $link cannot link to it; create it or set TUI_REPO_SHARED_DENYLIST"
+  { [ -f "$shared_denylist" ] && [ -r "$shared_denylist" ] && [ -s "$shared_denylist" ]; } ||
+    die "the shared denylist $shared_denylist is not a readable, non-empty file, so $link cannot link to it; fix it or set TUI_REPO_SHARED_DENYLIST"
 fi
 denylist="$shared_denylist"
 if [ -e "$link" ] || [ -L "$link" ]; then
@@ -944,6 +976,13 @@ url="$(pr_field url)"
 if [ -z "$url" ] && local_branch && ! ours; then
   echo "tui_repo: $branch exists locally with other work and no pull request, so phase 0 was left alone"
 fi
+if [ -z "$url" ] && ! local_branch && remote_branch; then
+  cat <<EOF
+tui_repo: $branch is on $repo with no pull request and no local branch, so phase 0 was left alone; to open the pull request, run:
+   git -C $dir fetch origin
+   git -C $dir show origin/$branch:.github/pull_request_template.md | gh pr create --repo $repo --head $branch --draft --assignee @me --title "$title" --body-file -
+EOF
+fi
 if ! scaffold_on_main; then
   echo "After merging the pull request, rerun tui_repo $name to require the remaining checks."
 fi
@@ -951,10 +990,16 @@ query "whether TAP_TOKEN is set" gh secret list --repo "$repo" --json name --jq 
 if printf '%s\n' "$probe_out" | grep -qx TAP_TOKEN; then
   echo "TAP_TOKEN: already set"
 else
+  tap_owner="${tap_repo%%/*}"
+  token_url="https://github.com/settings/personal-access-tokens/new?name=$name-tap&contents=write"
+  query "who is logged in to gh" gh api user --jq .login
+  if [ "$(printf '%s' "$probe_out" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$tap_owner" | tr '[:upper:]' '[:lower:]')" ]; then
+    token_url="$token_url&target_name=$tap_owner"
+  fi
   cat <<EOF
 Before merging the pull request, set TAP_TOKEN (the release needs it to write the Homebrew formula):
 
-1. Create the token: https://github.com/settings/personal-access-tokens/new?name=$name-tap&contents=write
+1. Create the token: $token_url
    Repository access: Only select repositories → ${tap_repo#*/}. Permission: Contents → Read and write.
 2. Copy the token, then run:
    pbpaste | gh secret set TAP_TOKEN --repo $repo

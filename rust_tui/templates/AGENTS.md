@@ -6,11 +6,11 @@ factual; verify against the code before treating anything here as live state.
 ## What this is
 
 {{name}}: {{description}}. What it does is not defined yet: Phase 1 defines the product.
-Until then the binary only answers `--help`, `--version` and `changelog`. Phase 0 scaffolded the
-guidelines, guardrails, CI and the automatic release from the `rust_tui` recipe, which descends
-from conveyor, an earlier project by the recipe's author; the conveyor history below is that
-project's. `PLAN.md` is the index of phases and the backlog; each phase's plan, outcome and
-hurdles are in `plans/`.
+Until then the binary only answers `--help`, `-h`, `help`, `--version`, `-V`, `version` and
+`changelog`. Phase 0 scaffolded the guidelines, guardrails, CI and the automatic release
+from the `rust_tui` recipe, which descends from conveyor, an earlier project by the recipe's
+author; the conveyor history below is that project's. `PLAN.md` is the index of phases and the
+backlog; each phase's plan, outcome and hurdles are in `plans/`.
 
 ## This repository is public
 

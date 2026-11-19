@@ -7,7 +7,8 @@ template of the `rust_tui` recipe (which descends from conveyor, an earlier proj
 recipe's author) with everything that works without a product: the agent guidelines, the
 guardrails, CI, and the automatic release that tags, builds, attests and publishes a binary, updates a
 Homebrew formula and moves a `stable` branch for the Nix flake. The binary itself only answers
-`--help`, `--version` and `changelog`; Phase 1 defines what {{name}} is.
+`--help`, `-h`, `help`, `--version`, `-V`, `version` and `changelog`; Phase 1 defines what {{name}}
+is.
 
 ## Verified facts ({{date}}, `main` at {{main_sha}})
 
@@ -87,8 +88,8 @@ every `v*` tag before running the scripts, so only a local run can see that stat
 - {{name}} has conveyor's process and pipeline, renamed: gates, scrub check, ship, dev-install,
   the release queue (tag, build, attest, publish, tap, `stable`), the `version` check, the
   flake build, the sweep issue, branch cleanup, the two skills, the issue forms and the three
-  `AGENTS.md` files. The binary answers `--help`, `--version` and `changelog` and nothing
-  else.
+  `AGENTS.md` files. The binary answers `--help`, `-h`, `help`, `--version`, `-V`, `version` and
+  `changelog` and nothing else.
 - The screenshot rules hold from this phase: `docs/help.png` shows `{{name}} --help`, and the
   pull request body embeds it at the commit that holds it.
 - The first release starts from zero tags: no tag reads as "never released", versions count

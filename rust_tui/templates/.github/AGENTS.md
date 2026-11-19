@@ -3,7 +3,7 @@
 The CI workflows and the branch protection around them, the issue forms, and the release
 internals (Releasing internals, below). What a pull request author needs to release is in Releasing
 in the root `AGENTS.md`. The workflows, scripts and most of the learnings below come from conveyor,
-a sibling project by the same owner; a number measured there says so.
+a sibling project by the recipe's author; a number measured there says so.
 
 ## CI
 
@@ -425,7 +425,7 @@ and `Cargo.lock` and by `CHANGELOG.md`.
 `scripts/formula-version.sh` picks the newest published `complete` release, and only when
 `Formula/{{name}}.rb` in `github.com/{{tap_repo}}` names an older version (or the file is
 missing) does the job regenerate it with `scripts/homebrew-formula.sh <version>` and push it with
-the `TAP_TOKEN` repository secret (a fine-grained token with contents:write on homebrew-tap; set
+the `TAP_TOKEN` repository secret (a fine-grained token with contents:write on {{tap_repo}}; set
 with `gh secret set TAP_TOKEN --repo {{owner}}/{{name}}`). The formula depends on nothing and its
 `test` block checks only `{{name}} --version` and the usage on an unknown argument, all the binary
 does so far (`tests/scripts/homebrew_formula.rs`). The formula never goes backwards: a run

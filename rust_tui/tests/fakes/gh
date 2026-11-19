@@ -141,12 +141,12 @@ api() {
       ;;
     "GET /rulesets")
       require_repo
-      json_or rulesets.json '[]' | jq '[.[] | {id, name, target, enforcement}]' | emit
+      json_or rulesets.json '[]' | jq '[.[] | {id, name, target, enforcement, source_type, source}]' | emit
       ;;
     "POST /rulesets")
       require_repo
       local id="${FAKE_RULESET_ID:-777}" body
-      body="$(request_body)"
+      body="$(request_body | jq --arg repo "$repo" '. + {source_type: "Repository", source: $repo}')"
       json_or rulesets.json '[]' | jq --argjson id "$id" --argjson body "$body" '. + [$body + {id: $id}]' | save rulesets.json
       jq -n --argjson id "$id" --argjson body "$body" '$body + {id: $id}' | emit
       ;;
@@ -161,7 +161,7 @@ api() {
       require_repo
       local body
       body="$(request_body)"
-      json_or rulesets.json '[]' | jq --argjson id "${route#/rulesets/}" --argjson body "$body" 'map(if .id == $id then $body + {id: $id} else . end)' | save rulesets.json
+      json_or rulesets.json '[]' | jq --argjson id "${route#/rulesets/}" --argjson body "$body" 'map(if .id == $id then $body + {id: $id, source_type, source} else . end)' | save rulesets.json
       ;;
     "GET /branches/"*)
       require_repo

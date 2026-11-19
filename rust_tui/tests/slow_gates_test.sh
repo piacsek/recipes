@@ -21,6 +21,22 @@ test_a_name_that_matches_a_cli_test_still_compiles_the_tests() {
   assert_status "$(cargo_check_tests help-exits-zero)" 0
 }
 
+test_rerun_after_the_gates_fail_on_a_tree_formatted_by_cargo_ends_like_an_uninterrupted_run() {
+  real_cargo_fmt
+  stop_once fail '^cargo clippy '
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
+test_rerun_after_an_interrupt_right_after_cargo_fmt_ends_like_an_uninterrupted_run() {
+  real_cargo_fmt
+  stop_once interrupt '^cargo fmt$'
+  assert_file "$SCRATCH/stop/fired"
+  assert_status "$RERUN_STATUS" 0
+  assert_eq "$STATE_DIFF" ""
+}
+
 bootstrap_like_tui_repo() {
   git init -q --bare "$SCRATCH/origin.git"
   git init -q "$1"
@@ -56,4 +72,12 @@ cargo_check_tests() {
   set -e
   [ "$status" = 0 ] || cat "$out.log" >&2
   echo "$status"
+}
+
+real_cargo_fmt() {
+  CARGO_HOME="${CARGO_HOME:-$REAL_HOME/.cargo}"
+  RUSTUP_HOME="${RUSTUP_HOME:-$REAL_HOME/.rustup}"
+  FAKE_REAL_CARGO="$(resolve_tool cargo)"
+  FAKE_REAL_PATH="$ORIGINAL_PATH"
+  export CARGO_HOME RUSTUP_HOME FAKE_REAL_CARGO FAKE_REAL_PATH
 }
